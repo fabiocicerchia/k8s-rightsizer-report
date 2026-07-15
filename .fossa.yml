@@ -1,0 +1,5 @@
+version: 3
+
+project:
+  id: github.com/fabiocicerchia/k8s-rightsizer-report
+  name: k8s-rightsizer-report
