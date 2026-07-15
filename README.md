@@ -13,12 +13,22 @@ loop that VPA recommendations leave open — getting the numbers *into the repo*
 
 ```console
 $ k8s-rightsizer-report -n app
-| workload/container | current req | peak usage | recommended req | Δ cpu |
+| kind/workload/container | current req | peak usage | recommended req | Δ cpu |
 |---|---|---|---|---|
-| api/app     | 1000m/1Gi | 180m/210Mi | 250m/288Mi | -75% |
-| worker/main | (unset)   | 350m/800Mi | 500m/1024Mi | new |
+| Deployment/api/app     | 1000m/1Gi | 180m/210Mi | 250m/288Mi | -75% |
+| Deployment/worker/main | (unset)   | 350m/800Mi | 500m/1024Mi | new |
 
 $ k8s-rightsizer-report -n app --diff > rightsizing-patch.yaml   # commit this
+```
+
+Sizes Deployments, StatefulSets, and DaemonSets. Opt a workload or specific
+containers (sidecars, agents) out via pod-template annotations:
+
+```yaml
+metadata:
+  annotations:
+    k8s-rightsizer-report/exclude: "true"                       # skip the whole workload
+    k8s-rightsizer-report/exclude-containers: "istio-proxy,vault-agent"  # skip just these
 ```
 
 ## Model
@@ -53,7 +63,7 @@ k8s-rightsizer-report -n production --json     # feed dashboards
 - [x] metrics-server snapshot → report / patch YAML / JSON
 - [x] Prometheus range queries (p95 over 7d instead of point-in-time top)
 - [x] VPA recommender CRs as an input source
-- [ ] StatefulSets/DaemonSets, per-container exclusion annotations
+- [x] StatefulSets/DaemonSets, per-container exclusion annotations
 - [ ] GitHub Action opening the PR automatically
 
 ## Development

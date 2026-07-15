@@ -18,6 +18,17 @@ import urllib.request
 HEADROOM = {"cpu": 1.4, "memory": 1.25}   # recommendation = peak usage * headroom
 LIMIT_FACTOR = {"cpu": 2.0, "memory": 1.5}  # limits = requests * factor
 
+# kubectl resource name -> (apiVersion, kind) — every workload kind this tool sizes
+WORKLOAD_KINDS = {
+    "deployments": ("apps/v1", "Deployment"),
+    "statefulsets": ("apps/v1", "StatefulSet"),
+    "daemonsets": ("apps/v1", "DaemonSet"),
+}
+
+# pod-template annotations that opt a workload/container out of sizing
+ANNOTATION_EXCLUDE = "k8s-rightsizer-report/exclude"
+ANNOTATION_EXCLUDE_CONTAINERS = "k8s-rightsizer-report/exclude-containers"
+
 
 def parse_cpu(value):
     """'250m' -> 0.25 cores, '2' -> 2.0"""
@@ -48,6 +59,16 @@ def kubectl_json(args):
     out = subprocess.run(["kubectl", *args, "-o", "json"],
                          check=True, capture_output=True, text=True).stdout
     return json.loads(out)
+
+
+def fetch_workloads(namespace, kinds=WORKLOAD_KINDS):
+    """Return [(apiVersion, kind, resource_dict), ...] across every workload
+    kind this tool sizes (Deployment/StatefulSet/DaemonSet)."""
+    workloads = []
+    for resource, (api_version, kind) in kinds.items():
+        for w in kubectl_json(["get", resource, "-n", namespace])["items"]:
+            workloads.append((api_version, kind, w))
+    return workloads
 
 
 def top_pods(namespace):
@@ -139,12 +160,21 @@ def recommend(peak):
     }
 
 
-def build_report(deployments, peaks):
-    """Yield rows: workload, container, current requests, peak usage, recommendation."""
+def build_report(workloads, peaks):
+    """Yield rows: kind, workload, container, current requests, peak usage,
+    recommendation. `workloads` is [(apiVersion, kind, resource_dict), ...];
+    plain resource dicts (implicitly Deployment) are accepted too."""
     rows = []
-    for d in deployments:
+    for w in workloads:
+        api_version, kind, d = w if isinstance(w, tuple) else ("apps/v1", "Deployment", w)
         name = d["metadata"]["name"]
+        annotations = d["spec"]["template"].get("metadata", {}).get("annotations", {}) or {}
+        if annotations.get(ANNOTATION_EXCLUDE, "").lower() == "true":
+            continue
+        excluded = {c.strip() for c in annotations.get(ANNOTATION_EXCLUDE_CONTAINERS, "").split(",") if c.strip()}
         for c in d["spec"]["template"]["spec"]["containers"]:
+            if c["name"] in excluded:
+                continue
             peak = peaks.get((name, c["name"]))
             if not peak:
                 continue
@@ -153,6 +183,7 @@ def build_report(deployments, peaks):
             cur_cpu = parse_cpu(current.get("cpu", "0"))
             rec_cpu = parse_cpu(rec["requests"]["cpu"])
             rows.append({
+                "api_version": api_version, "kind": kind,
                 "workload": name, "container": c["name"],
                 "current_requests": current or None,
                 "peak": {"cpu": fmt_cpu(peak["cpu"]), "memory": fmt_memory(peak["memory"])},
@@ -164,27 +195,27 @@ def build_report(deployments, peaks):
 
 def render_report(rows, namespace):
     lines = [f"# Rightsizing report — namespace `{namespace}`\n",
-             "| workload/container | current req | peak usage | recommended req | Δ cpu |",
+             "| kind/workload/container | current req | peak usage | recommended req | Δ cpu |",
              "|---|---|---|---|---|"]
     for r in rows:
         cur = r["current_requests"]
         cur_s = f"{cur.get('cpu', '–')}/{cur.get('memory', '–')}" if cur else "(unset)"
         rec = r["recommended"]["requests"]
         delta = f"{r['cpu_change_pct']:+d}%" if r["cpu_change_pct"] is not None else "new"
-        lines.append(f"| {r['workload']}/{r['container']} | {cur_s} "
+        lines.append(f"| {r.get('kind', 'Deployment')}/{r['workload']}/{r['container']} | {cur_s} "
                      f"| {r['peak']['cpu']}/{r['peak']['memory']} "
                      f"| {rec['cpu']}/{rec['memory']} | {delta} |")
     return "\n".join(lines)
 
 
 def render_diff(rows):
-    """Kustomize-style patch snippets, one per workload — commit-ready."""
+    """Kustomize-style patch snippets, one per workload container — commit-ready."""
     import yaml
     docs = []
     for r in rows:
         docs.append({
-            "apiVersion": "apps/v1",
-            "kind": "Deployment",
+            "apiVersion": r.get("api_version", "apps/v1"),
+            "kind": r.get("kind", "Deployment"),
             "metadata": {"name": r["workload"]},
             "spec": {"template": {"spec": {"containers": [{
                 "name": r["container"],
@@ -207,14 +238,14 @@ def main(argv=None):
                     help="use VerticalPodAutoscaler recommendations instead of metrics-server")
     args = p.parse_args(argv)
 
-    deployments = kubectl_json(["get", "deployments", "-n", args.namespace])["items"]
+    workloads = fetch_workloads(args.namespace)
     if args.vpa:
         peaks = vpa_recommendations(args.namespace)
     elif args.prometheus:
         peaks = aggregate_by_owner(top_pods_prometheus(args.namespace, args.prometheus, args.days))
     else:
         peaks = aggregate_by_owner(top_pods(args.namespace))
-    rows = build_report(deployments, peaks)
+    rows = build_report(workloads, peaks)
 
     if args.json:
         json.dump(rows, sys.stdout, indent=2)

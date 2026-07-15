@@ -45,6 +45,43 @@ def test_top_pods_prometheus_parses_p95_vectors():
     assert usage == {"api-abc": {"app": {"cpu": 0.3, "memory": 300 * 2**20}}}
 
 
+def test_build_report_tags_statefulset_kind():
+    workloads = [("apps/v1", "StatefulSet",
+                  {"metadata": {"name": "cache"},
+                   "spec": {"template": {"spec": {"containers": [{"name": "app"}]}}}})]
+    peaks = {("cache", "app"): {"cpu": 0.2, "memory": 128 * 2**20}}
+    rows = build_report(workloads, peaks)
+    assert rows[0]["kind"] == "StatefulSet"
+    assert "StatefulSet/cache/app" in m.render_report(rows, "ns")
+    assert "kind: StatefulSet" in m.render_diff(rows)
+
+
+def test_build_report_skips_excluded_workload():
+    workloads = [("apps/v1", "Deployment",
+                  {"metadata": {"name": "api"},
+                   "spec": {"template": {
+                       "metadata": {"annotations": {m.ANNOTATION_EXCLUDE: "true"}},
+                       "spec": {"containers": [{"name": "app"}]}}}})]
+    peaks = {("api", "app"): {"cpu": 0.2, "memory": 128 * 2**20}}
+    assert build_report(workloads, peaks) == []
+
+
+def test_build_report_skips_excluded_container():
+    workloads = [("apps/v1", "Deployment",
+                  {"metadata": {"name": "api"},
+                   "spec": {"template": {
+                       "metadata": {"annotations": {
+                           m.ANNOTATION_EXCLUDE_CONTAINERS: "istio-proxy, vault-agent"}},
+                       "spec": {"containers": [
+                           {"name": "app"}, {"name": "istio-proxy"}]}}}})]
+    peaks = {
+        ("api", "app"): {"cpu": 0.2, "memory": 128 * 2**20},
+        ("api", "istio-proxy"): {"cpu": 0.1, "memory": 64 * 2**20},
+    }
+    rows = build_report(workloads, peaks)
+    assert {r["container"] for r in rows} == {"app"}
+
+
 def test_vpa_recommendations_reads_target(monkeypatch):
     def fake_kubectl_json(args):
         assert args == ["get", "verticalpodautoscalers", "-n", "prod"]
