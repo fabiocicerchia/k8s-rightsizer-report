@@ -111,6 +111,24 @@ def aggregate_by_owner(usage):
     return peaks
 
 
+def vpa_recommendations(namespace):
+    """(workload, container) -> {cpu, memory} target from VerticalPodAutoscaler CRs —
+    already a percentile-based recommendation, so it drops straight into the
+    same `peaks` shape metrics-server/Prometheus produce."""
+    peaks = {}
+    for vpa in kubectl_json(["get", "verticalpodautoscalers", "-n", namespace])["items"]:
+        workload = vpa["spec"]["targetRef"]["name"]
+        for rec in vpa.get("status", {}).get("recommendation", {}).get("containerRecommendations", []):
+            target = rec.get("target", {})
+            if not target:
+                continue
+            peaks[(workload, rec["containerName"])] = {
+                "cpu": parse_cpu(target.get("cpu", "0")),
+                "memory": parse_memory(target.get("memory", "0")),
+            }
+    return peaks
+
+
 def recommend(peak):
     req_cpu = peak["cpu"] * HEADROOM["cpu"]
     req_mem = peak["memory"] * HEADROOM["memory"]
@@ -185,10 +203,14 @@ def main(argv=None):
     p.add_argument("--prometheus", metavar="URL",
                     help="use PromQL p95-over-time instead of a point-in-time kubectl top")
     p.add_argument("--days", type=int, default=7, help="lookback window for --prometheus (default: 7)")
+    p.add_argument("--vpa", action="store_true",
+                    help="use VerticalPodAutoscaler recommendations instead of metrics-server")
     args = p.parse_args(argv)
 
     deployments = kubectl_json(["get", "deployments", "-n", args.namespace])["items"]
-    if args.prometheus:
+    if args.vpa:
+        peaks = vpa_recommendations(args.namespace)
+    elif args.prometheus:
         peaks = aggregate_by_owner(top_pods_prometheus(args.namespace, args.prometheus, args.days))
     else:
         peaks = aggregate_by_owner(top_pods(args.namespace))

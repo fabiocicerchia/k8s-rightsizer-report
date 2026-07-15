@@ -43,3 +43,17 @@ def test_top_pods_prometheus_parses_p95_vectors():
 
     usage = m.top_pods_prometheus("prod", "http://prom:9090", days=7, fetcher=fake_fetcher)
     assert usage == {"api-abc": {"app": {"cpu": 0.3, "memory": 300 * 2**20}}}
+
+
+def test_vpa_recommendations_reads_target(monkeypatch):
+    def fake_kubectl_json(args):
+        assert args == ["get", "verticalpodautoscalers", "-n", "prod"]
+        return {"items": [{
+            "spec": {"targetRef": {"name": "api"}},
+            "status": {"recommendation": {"containerRecommendations": [
+                {"containerName": "app", "target": {"cpu": "300m", "memory": "256Mi"}}]}},
+        }]}
+
+    monkeypatch.setattr(m, "kubectl_json", fake_kubectl_json)
+    peaks = m.vpa_recommendations("prod")
+    assert peaks == {("api", "app"): {"cpu": 0.3, "memory": 256 * 2**20}}
