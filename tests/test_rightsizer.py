@@ -1,3 +1,4 @@
+import k8s_rightsizer_report as m
 from k8s_rightsizer_report import (aggregate_by_owner, build_report, fmt_cpu, fmt_memory,
                                    parse_cpu, parse_memory, recommend, render_report)
 
@@ -31,3 +32,14 @@ def test_report_flags_unset_requests():
     rows = build_report(deployments, peaks)
     assert rows[0]["current_requests"] is None
     assert "(unset)" in render_report(rows, "app")
+
+
+def test_top_pods_prometheus_parses_p95_vectors():
+    def fake_fetcher(url):
+        metric = "cpu" if "container_cpu_usage_seconds_total" in url else "memory"
+        value = "0.3" if metric == "cpu" else str(300 * 2**20)
+        return {"data": {"result": [
+            {"metric": {"pod": "api-abc", "container": "app"}, "value": [0, value]}]}}
+
+    usage = m.top_pods_prometheus("prod", "http://prom:9090", days=7, fetcher=fake_fetcher)
+    assert usage == {"api-abc": {"app": {"cpu": 0.3, "memory": 300 * 2**20}}}

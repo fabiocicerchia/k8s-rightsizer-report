@@ -51,7 +51,7 @@ k8s-rightsizer-report -n production --json     # feed dashboards
 ## Status & roadmap
 
 - [x] metrics-server snapshot → report / patch YAML / JSON
-- [ ] Prometheus range queries (p95 over 7d instead of point-in-time top)
+- [x] Prometheus range queries (p95 over 7d instead of point-in-time top)
 - [ ] VPA recommender CRs as an input source
 - [ ] StatefulSets/DaemonSets, per-container exclusion annotations
 - [ ] GitHub Action opening the PR automatically

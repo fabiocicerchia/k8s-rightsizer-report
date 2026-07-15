@@ -12,6 +12,8 @@ import argparse
 import json
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 
 HEADROOM = {"cpu": 1.4, "memory": 1.25}   # recommendation = peak usage * headroom
 LIMIT_FACTOR = {"cpu": 2.0, "memory": 1.5}  # limits = requests * factor
@@ -60,6 +62,39 @@ def top_pods(namespace):
             pod, container, cpu, mem = parts[0], parts[1], parts[2], parts[3]
             usage.setdefault(pod, {})[container] = {
                 "cpu": parse_cpu(cpu), "memory": parse_memory(mem)}
+    return usage
+
+
+def default_http_get(url):
+    with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 (fixed http/https API URL)
+        return json.loads(resp.read())
+
+
+def prometheus_query(base_url, query, fetcher=default_http_get):
+    """Run an instant PromQL query, return the raw `data.result` vector."""
+    url = f"{base_url.rstrip('/')}/api/v1/query?query={urllib.parse.quote(query)}"
+    return fetcher(url).get("data", {}).get("result", [])
+
+
+def top_pods_prometheus(namespace, base_url, days=7, fetcher=default_http_get):
+    """Return {pod: {container: {cpu, memory}}}, p95 over `days` via PromQL
+    quantile_over_time — same shape as top_pods() so it drops into
+    aggregate_by_owner() unchanged."""
+    window = f"{days}d"
+    queries = {
+        "cpu": f'quantile_over_time(0.95, rate(container_cpu_usage_seconds_total'
+               f'{{namespace="{namespace}",container!="",container!="POD"}}[5m])[{window}:5m])',
+        "memory": f'quantile_over_time(0.95, container_memory_working_set_bytes'
+                  f'{{namespace="{namespace}",container!="",container!="POD"}}[{window}:5m])',
+    }
+    usage = {}
+    for metric, query in queries.items():
+        for series in prometheus_query(base_url, query, fetcher):
+            pod, container = series["metric"].get("pod"), series["metric"].get("container")
+            if not pod or not container:
+                continue
+            usage.setdefault(pod, {}).setdefault(
+                container, {"cpu": 0.0, "memory": 0.0})[metric] = float(series["value"][1])
     return usage
 
 
@@ -147,10 +182,16 @@ def main(argv=None):
     p.add_argument("--namespace", "-n", required=True)
     p.add_argument("--diff", action="store_true", help="emit patch YAML instead of a report")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--prometheus", metavar="URL",
+                    help="use PromQL p95-over-time instead of a point-in-time kubectl top")
+    p.add_argument("--days", type=int, default=7, help="lookback window for --prometheus (default: 7)")
     args = p.parse_args(argv)
 
     deployments = kubectl_json(["get", "deployments", "-n", args.namespace])["items"]
-    peaks = aggregate_by_owner(top_pods(args.namespace))
+    if args.prometheus:
+        peaks = aggregate_by_owner(top_pods_prometheus(args.namespace, args.prometheus, args.days))
+    else:
+        peaks = aggregate_by_owner(top_pods(args.namespace))
     rows = build_report(deployments, peaks)
 
     if args.json:
