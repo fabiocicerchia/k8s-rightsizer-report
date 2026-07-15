@@ -64,7 +64,7 @@ k8s-rightsizer-report -n production --json     # feed dashboards
 - [x] Prometheus range queries (p95 over 7d instead of point-in-time top)
 - [x] VPA recommender CRs as an input source
 - [x] StatefulSets/DaemonSets, per-container exclusion annotations
-- [ ] GitHub Action opening the PR automatically
+- [x] GitHub Action opening the PR automatically
 
 ## Development
 
