@@ -58,14 +58,6 @@ k8s-rightsizer-report -n production            # needs kubectl + metrics-server
 k8s-rightsizer-report -n production --json     # feed dashboards
 ```
 
-## Status & roadmap
-
-- [x] metrics-server snapshot → report / patch YAML / JSON
-- [x] Prometheus range queries (p95 over 7d instead of point-in-time top)
-- [x] VPA recommender CRs as an input source
-- [x] StatefulSets/DaemonSets, per-container exclusion annotations
-- [x] GitHub Action opening the PR automatically
-
 ## Development
 
 `make dev` then `make test` / `make lint`.
