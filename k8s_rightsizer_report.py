@@ -94,9 +94,7 @@ def top_pods(namespace):
 
 
 def default_http_get(url):
-    with urllib.request.urlopen(
-        url, timeout=10
-    ) as resp:  # noqa: S310 (fixed http/https API URL)
+    with urllib.request.urlopen(url, timeout=10) as resp:
         return json.loads(resp.read())
 
 
@@ -120,14 +118,12 @@ def top_pods_prometheus(namespace, base_url, days=7, fetcher=default_http_get):
     usage = {}
     for metric, query in queries.items():
         for series in prometheus_query(base_url, query, fetcher):
-            pod, container = series["metric"].get("pod"), series["metric"].get(
-                "container"
-            )
+            pod, container = series["metric"].get("pod"), series["metric"].get("container")
             if not pod or not container:
                 continue
-            usage.setdefault(pod, {}).setdefault(
-                container, {"cpu": 0.0, "memory": 0.0}
-            )[metric] = float(series["value"][1])
+            usage.setdefault(pod, {}).setdefault(container, {"cpu": 0.0, "memory": 0.0})[metric] = (
+                float(series["value"][1])
+            )
     return usage
 
 
@@ -149,14 +145,10 @@ def vpa_recommendations(namespace):
     already a percentile-based recommendation, so it drops straight into the
     same `peaks` shape metrics-server/Prometheus produce."""
     peaks = {}
-    for vpa in kubectl_json(["get", "verticalpodautoscalers", "-n", namespace])[
-        "items"
-    ]:
+    for vpa in kubectl_json(["get", "verticalpodautoscalers", "-n", namespace])["items"]:
         workload = vpa["spec"]["targetRef"]["name"]
         for rec in (
-            vpa.get("status", {})
-            .get("recommendation", {})
-            .get("containerRecommendations", [])
+            vpa.get("status", {}).get("recommendation", {}).get("containerRecommendations", [])
         ):
             target = rec.get("target", {})
             if not target:
@@ -186,13 +178,9 @@ def build_report(workloads, peaks):
     plain resource dicts (implicitly Deployment) are accepted too."""
     rows = []
     for w in workloads:
-        api_version, kind, d = (
-            w if isinstance(w, tuple) else ("apps/v1", "Deployment", w)
-        )
+        api_version, kind, d = w if isinstance(w, tuple) else ("apps/v1", "Deployment", w)
         name = d["metadata"]["name"]
-        annotations = (
-            d["spec"]["template"].get("metadata", {}).get("annotations", {}) or {}
-        )
+        annotations = d["spec"]["template"].get("metadata", {}).get("annotations", {}) or {}
         if annotations.get(ANNOTATION_EXCLUDE, "").lower() == "true":
             continue
         excluded = {
@@ -240,9 +228,7 @@ def render_report(rows, namespace):
         cur = r["current_requests"]
         cur_s = f"{cur.get('cpu', '–')}/{cur.get('memory', '–')}" if cur else "(unset)"
         rec = r["recommended"]["requests"]
-        delta = (
-            f"{r['cpu_change_pct']:+d}%" if r["cpu_change_pct"] is not None else "new"
-        )
+        delta = f"{r['cpu_change_pct']:+d}%" if r["cpu_change_pct"] is not None else "new"
         lines.append(
             f"| {r.get('kind', 'Deployment')}/{r['workload']}/{r['container']} | {cur_s} "
             f"| {r['peak']['cpu']}/{r['peak']['memory']} "
@@ -286,9 +272,7 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--namespace", "-n", required=True)
-    p.add_argument(
-        "--diff", action="store_true", help="emit patch YAML instead of a report"
-    )
+    p.add_argument("--diff", action="store_true", help="emit patch YAML instead of a report")
     p.add_argument("--json", action="store_true")
     p.add_argument(
         "--prometheus",
@@ -312,9 +296,7 @@ def main(argv=None):
     if args.vpa:
         peaks = vpa_recommendations(args.namespace)
     elif args.prometheus:
-        peaks = aggregate_by_owner(
-            top_pods_prometheus(args.namespace, args.prometheus, args.days)
-        )
+        peaks = aggregate_by_owner(top_pods_prometheus(args.namespace, args.prometheus, args.days))
     else:
         peaks = aggregate_by_owner(top_pods(args.namespace))
     rows = build_report(workloads, peaks)
