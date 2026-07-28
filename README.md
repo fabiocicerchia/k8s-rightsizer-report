@@ -62,6 +62,10 @@ k8s-rightsizer-report -n production --json     # feed dashboards
 
 `make dev` then `make test` / `make lint`.
 
+## Support
+
+Need help implementing this? [Get in touch](https://fabiocicerchia.it/contact).
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).

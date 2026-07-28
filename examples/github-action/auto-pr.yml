@@ -29,8 +29,13 @@ jobs:
           python-version: "3.12"
       - run: pip install k8s-rightsizer-report
       - name: Generate the patch
+        env:
+          # Passed through an env var, not interpolated into the script — a
+          # malicious workflow_dispatch namespace value (this job holds
+          # contents:write/pull-requests:write) can't inject shell commands.
+          NAMESPACE: ${{ inputs.namespace || 'default' }}
         run: |
-          k8s-rightsizer-report -n "${{ inputs.namespace || 'default' }}" --diff \
+          k8s-rightsizer-report -n "$NAMESPACE" --diff \
             > rightsizing-patch.yaml
       - name: Open a PR if the patch changed
         env:
