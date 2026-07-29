@@ -61,9 +61,7 @@ def test_top_pods_prometheus_parses_p95_vectors():
             }
         }
 
-    usage = m.top_pods_prometheus(
-        "prod", "http://prom:9090", days=7, fetcher=fake_fetcher
-    )
+    usage = m.top_pods_prometheus("prod", "http://prom:9090", days=7, fetcher=fake_fetcher)
     assert usage == {"api-abc": {"app": {"cpu": 0.3, "memory": 300 * 2**20}}}
 
 
@@ -119,9 +117,7 @@ def test_build_report_skips_excluded_container():
                                 m.ANNOTATION_EXCLUDE_CONTAINERS: "istio-proxy, vault-agent"
                             }
                         },
-                        "spec": {
-                            "containers": [{"name": "app"}, {"name": "istio-proxy"}]
-                        },
+                        "spec": {"containers": [{"name": "app"}, {"name": "istio-proxy"}]},
                     }
                 },
             },
