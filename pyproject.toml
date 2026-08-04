@@ -7,7 +7,7 @@ name = "k8s-rightsizer-report"
 version = "0.1.0"
 description = "metrics-server/VPA data to PR-ready requests/limits diffs"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Fabio Cicerchia" }]
 requires-python = ">=3.10"
 classifiers = [
@@ -15,7 +15,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
 ]
