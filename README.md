@@ -61,6 +61,10 @@ k8s-rightsizer-report -n production --json     # feed dashboards
 
 `make dev` then `make test` / `make lint`.
 
+## Documentation
+
+Full docs live in [`docs/`](docs/). Runnable examples live in [`examples/`](examples/).
+
 ## Support
 
 Need help implementing this? [Get in touch](https://fabiocicerchia.it/contact).
