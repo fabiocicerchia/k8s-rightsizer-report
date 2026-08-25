@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.1.2...v0.2.0) (2026-08-25)
+
+
+### Features
+
+* **docs:** build the docs site in Actions and drop Read the Docs ([#39](https://github.com/fabiocicerchia/k8s-rightsizer-report/issues/39)) ([0c0a8b8](https://github.com/fabiocicerchia/k8s-rightsizer-report/commit/0c0a8b8e1afbf96893d84f1c4fd2b2ea8cb004d3))
+
+
+### Bug Fixes
+
+* **ci:** compute the next release PR after the draft is published ([#36](https://github.com/fabiocicerchia/k8s-rightsizer-report/issues/36)) ([e3d66fa](https://github.com/fabiocicerchia/k8s-rightsizer-report/commit/e3d66fa0873cb7d2848636001d14e0fd78052c88))
+
 ## [0.1.2](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.1.1...v0.1.2) (2026-08-13)
 
 
