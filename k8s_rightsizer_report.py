@@ -105,7 +105,7 @@ def default_http_get(url):
     scheme = urllib.parse.urlparse(url).scheme
     if scheme not in ALLOWED_SCHEMES:
         raise ValueError(f"--prometheus must be an http(s) URL, got {scheme or 'no'} scheme")
-    with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 — scheme checked above
+    with urllib.request.urlopen(url, timeout=10) as resp:  # nosec B310 — scheme checked above
         return json.loads(resp.read())
 
 
