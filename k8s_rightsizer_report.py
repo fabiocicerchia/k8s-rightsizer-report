@@ -93,8 +93,19 @@ def top_pods(namespace):
     return usage
 
 
+# urlopen honours whatever scheme it is handed, including file:, ftp: and the
+# data: URLs — so a --prometheus value that arrives from a config file or a CI
+# variable rather than a person's shell could read a local file instead of
+# querying anything. The endpoint is meant to be an HTTP(S) Prometheus, so say
+# so and refuse the rest.
+ALLOWED_SCHEMES = ("http", "https")
+
+
 def default_http_get(url):
-    with urllib.request.urlopen(url, timeout=10) as resp:
+    scheme = urllib.parse.urlparse(url).scheme
+    if scheme not in ALLOWED_SCHEMES:
+        raise ValueError(f"--prometheus must be an http(s) URL, got {scheme or 'no'} scheme")
+    with urllib.request.urlopen(url, timeout=10) as resp:  # nosec B310 — scheme checked above
         return json.loads(resp.read())
 
 

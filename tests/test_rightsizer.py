@@ -1,3 +1,5 @@
+import pytest
+
 import k8s_rightsizer_report as m
 from k8s_rightsizer_report import (
     aggregate_by_owner,
@@ -155,3 +157,15 @@ def test_vpa_recommendations_reads_target(monkeypatch):
     monkeypatch.setattr(m, "kubectl_json", fake_kubectl_json)
     peaks = m.vpa_recommendations("prod")
     assert peaks == {("api", "app"): {"cpu": 0.3, "memory": 256 * 2**20}}
+
+
+# urlopen honours file:, ftp: and data: as readily as http:. --prometheus is
+# documented as an HTTP endpoint, and its value can arrive from a config file
+# or a CI variable rather than a person's shell, so a non-HTTP scheme has to be
+# refused rather than fetched.
+@pytest.mark.parametrize(
+    "url", ["file:///etc/passwd", "ftp://host/x", "data:text/plain,x", "/etc/passwd", ""]
+)
+def test_default_http_get_refuses_non_http_schemes(url):
+    with pytest.raises(ValueError, match="http\\(s\\) URL"):
+        m.default_http_get(url)
