@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.2.0...v0.2.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **prometheus:** require an http(s) scheme on --prometheus ([#47](https://github.com/fabiocicerchia/k8s-rightsizer-report/issues/47)) ([5026995](https://github.com/fabiocicerchia/k8s-rightsizer-report/commit/5026995059ac7a2805ba788763d5251cd32364bf))
+* unblock quality and clear the Scorecard pinned-dependencies finding ([#49](https://github.com/fabiocicerchia/k8s-rightsizer-report/issues/49)) ([dab4349](https://github.com/fabiocicerchia/k8s-rightsizer-report/commit/dab4349046ac5bf1059555e33b56ae531954d609))
+
 ## [0.2.0](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.1.2...v0.2.0) (2026-08-25)
 
 
