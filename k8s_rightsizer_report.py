@@ -191,6 +191,25 @@ def recommend(peak):
     }
 
 
+def sizable_containers(resource):
+    """The containers of one workload the pod-template exclude annotations
+    leave in scope; an excluded workload contributes none."""
+    template = resource["spec"]["template"]
+    annotations = template.get("metadata", {}).get("annotations", {}) or {}
+    if annotations.get(ANNOTATION_EXCLUDE, "").lower() == "true":
+        return []
+    excluded = {
+        excluded_name.strip()
+        for excluded_name in annotations.get(ANNOTATION_EXCLUDE_CONTAINERS, "").split(",")
+        if excluded_name.strip()
+    }
+    return [
+        container
+        for container in template["spec"]["containers"]
+        if container["name"] not in excluded
+    ]
+
+
 def build_report(workloads, peaks):
     """Yield rows: kind, workload, container, current requests, peak usage,
     recommendation. `workloads` is [(apiVersion, kind, resource_dict), ...];
@@ -201,18 +220,7 @@ def build_report(workloads, peaks):
             workload if isinstance(workload, tuple) else ("apps/v1", "Deployment", workload)
         )
         name = resource["metadata"]["name"]
-        template = resource["spec"]["template"]
-        annotations = template.get("metadata", {}).get("annotations", {}) or {}
-        if annotations.get(ANNOTATION_EXCLUDE, "").lower() == "true":
-            continue
-        excluded = {
-            excluded_name.strip()
-            for excluded_name in annotations.get(ANNOTATION_EXCLUDE_CONTAINERS, "").split(",")
-            if excluded_name.strip()
-        }
-        for container in template["spec"]["containers"]:
-            if container["name"] in excluded:
-                continue
+        for container in sizable_containers(resource):
             peak = peaks.get((name, container["name"]))
             if not peak:
                 continue
@@ -290,7 +298,7 @@ def render_diff(rows):
     return yaml.dump_all(docs, sort_keys=False)
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(
         prog="k8s-rightsizer-report",
         description=__doc__,
@@ -315,7 +323,11 @@ def main(argv=None):
         action="store_true",
         help="use VerticalPodAutoscaler recommendations instead of metrics-server",
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
 
     workloads = fetch_workloads(args.namespace)
     if args.vpa:
