@@ -67,11 +67,14 @@ def fmt_memory(b):
     return f"{mi}Mi"
 
 
+def kubectl(args):
+    """Run kubectl and return its stdout. Every shell-out goes through here so
+    the failure behaviour (check=True) is decided in one place."""
+    return subprocess.run(["kubectl", *args], check=True, capture_output=True, text=True).stdout
+
+
 def kubectl_json(args):
-    out = subprocess.run(
-        ["kubectl", *args, "-o", "json"], check=True, capture_output=True, text=True
-    ).stdout
-    return json.loads(out)
+    return json.loads(kubectl([*args, "-o", "json"]))
 
 
 def fetch_workloads(namespace, kinds=WORKLOAD_KINDS):
@@ -86,12 +89,7 @@ def fetch_workloads(namespace, kinds=WORKLOAD_KINDS):
 
 def top_pods(namespace):
     """Return {pod: {container: {cpu, memory}}} from metrics-server."""
-    out = subprocess.run(
-        ["kubectl", "top", "pods", "-n", namespace, "--containers", "--no-headers"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    out = kubectl(["top", "pods", "-n", namespace, "--containers", "--no-headers"])
     usage = {}
     for line in out.splitlines():
         parts = line.split()
