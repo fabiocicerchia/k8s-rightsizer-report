@@ -35,8 +35,9 @@ metadata:
 
 `recommended request = peak observed usage × headroom` (1.4× CPU, 1.25×
 memory), rounded to sane steps (25m / 32Mi); `limits = requests × 2 (CPU) /
-1.5 (memory)`. Deliberately simple and explainable — see roadmap for
-percentile-based inputs.
+1.5 (memory)`. Deliberately simple and explainable. The peak comes from
+`kubectl top` by default, or from a PromQL p95 with `--prometheus`, or from
+VerticalPodAutoscaler targets with `--vpa`.
 
 ## Install
 
