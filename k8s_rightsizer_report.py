@@ -19,6 +19,16 @@ import urllib.request
 HEADROOM = {"cpu": 1.4, "memory": 1.25}  # recommendation = peak usage * headroom
 LIMIT_FACTOR = {"cpu": 2.0, "memory": 1.5}  # limits = requests * factor
 
+MILLICORES_PER_CORE = 1000
+CPU_STEP_MILLICORES = 25  # recommendations round up to whole 25m / 32Mi steps
+MEMORY_STEP_MIB = 32
+
+# kubectl names a pod "<workload>-<replicaset-hash>-<pod-id>", so the owning
+# workload is the name minus this many trailing dash-separated parts.
+POD_SUFFIX_PARTS = 2
+
+DEFAULT_LOOKBACK_DAYS = 7  # --prometheus lookback; the flag default and this must agree
+
 # kubectl resource name -> (apiVersion, kind) — every workload kind this tool sizes
 WORKLOAD_KINDS = {
     "deployments": ("apps/v1", "Deployment"),
@@ -34,7 +44,7 @@ ANNOTATION_EXCLUDE_CONTAINERS = "k8s-rightsizer-report/exclude-containers"
 def parse_cpu(value):
     """'250m' -> 0.25 cores, '2' -> 2.0"""
     value = str(value)
-    return float(value[:-1]) / 1000 if value.endswith("m") else float(value)
+    return float(value[:-1]) / MILLICORES_PER_CORE if value.endswith("m") else float(value)
 
 
 def parse_memory(value):
@@ -48,11 +58,12 @@ def parse_memory(value):
 
 
 def fmt_cpu(cores):
-    return f"{max(round(cores * 1000 / 25) * 25, 25)}m"  # round to 25m steps
+    millicores = cores * MILLICORES_PER_CORE / CPU_STEP_MILLICORES
+    return f"{max(round(millicores) * CPU_STEP_MILLICORES, CPU_STEP_MILLICORES)}m"
 
 
 def fmt_memory(b):
-    mi = max(round(b / 2**20 / 32) * 32, 32)  # round to 32Mi steps
+    mi = max(round(b / 2**20 / MEMORY_STEP_MIB) * MEMORY_STEP_MIB, MEMORY_STEP_MIB)
     return f"{mi}Mi"
 
 
@@ -115,7 +126,7 @@ def prometheus_query(base_url, query, fetcher=default_http_get):
     return fetcher(url).get("data", {}).get("result", [])
 
 
-def top_pods_prometheus(namespace, base_url, days=7, fetcher=default_http_get):
+def top_pods_prometheus(namespace, base_url, days=DEFAULT_LOOKBACK_DAYS, fetcher=default_http_get):
     """Return {pod: {container: {cpu, memory}}}, p95 over `days` via PromQL
     quantile_over_time — same shape as top_pods() so it drops into
     aggregate_by_owner() unchanged."""
@@ -142,7 +153,7 @@ def aggregate_by_owner(usage):
     """Collapse pod-level usage to peak per (workload-prefix, container)."""
     peaks = {}
     for pod, containers in usage.items():
-        owner = pod.rsplit("-", 2)[0] if pod.count("-") >= 2 else pod
+        owner = pod.rsplit("-", POD_SUFFIX_PARTS)[0] if pod.count("-") >= POD_SUFFIX_PARTS else pod
         for container, u in containers.items():
             key = (owner, container)
             cur = peaks.setdefault(key, {"cpu": 0.0, "memory": 0.0})
@@ -293,8 +304,8 @@ def main(argv=None):
     p.add_argument(
         "--days",
         type=int,
-        default=7,
-        help="lookback window for --prometheus (default: 7)",
+        default=DEFAULT_LOOKBACK_DAYS,
+        help=f"lookback window for --prometheus (default: {DEFAULT_LOOKBACK_DAYS})",
     )
     p.add_argument(
         "--vpa",
