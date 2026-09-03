@@ -35,5 +35,11 @@ k8s-rightsizer-report = "k8s_rightsizer_report:main"
 [tool.setuptools]
 py-modules = ["k8s_rightsizer_report"]
 
+[tool.pytest.ini_options]
+# Without this pytest imports whatever k8s_rightsizer_report an editable
+# install points at, not the checkout under test — a stale one turns the suite
+# green (or red) on code nobody is editing.
+pythonpath = ["."]
+
 [tool.ruff]
 line-length = 100

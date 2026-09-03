@@ -24,11 +24,11 @@ k8s-rightsizer-report -n default --json | jq .
 ## Expected output
 
 ```
-| workload/container | current req   | peak usage  | recommended req | Δ cpu |
+| kind/workload/container   | current req   | peak usage  | recommended req | Δ cpu |
 |---|---|---|---|---|
-| api/app            | 1000m/1Gi     | 180m/210Mi  | 250m/288Mi      | -75%  |
-| worker/main        | (unset)       | 350m/800Mi  | 500m/1024Mi     | new   |
+| Deployment/api/app        | 1000m/1Gi     | 180m/210Mi  | 250m/288Mi      | -75%  |
+| Deployment/worker/main    | (unset)       | 350m/800Mi  | 500m/1024Mi     | new   |
 ```
 
-Containers where recommended values match current requests within 10% are
-omitted — no noise on already well-tuned workloads.
+Every container with observed usage is listed; a container metrics-server has
+no sample for is the only one left out.

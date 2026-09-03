@@ -19,6 +19,16 @@ import urllib.request
 HEADROOM = {"cpu": 1.4, "memory": 1.25}  # recommendation = peak usage * headroom
 LIMIT_FACTOR = {"cpu": 2.0, "memory": 1.5}  # limits = requests * factor
 
+MILLICORES_PER_CORE = 1000
+CPU_STEP_MILLICORES = 25  # recommendations round up to whole 25m / 32Mi steps
+MEMORY_STEP_MIB = 32
+
+# kubectl names a pod "<workload>-<replicaset-hash>-<pod-id>", so the owning
+# workload is the name minus this many trailing dash-separated parts.
+POD_SUFFIX_PARTS = 2
+
+DEFAULT_LOOKBACK_DAYS = 7  # --prometheus lookback; the flag default and this must agree
+
 # kubectl resource name -> (apiVersion, kind) — every workload kind this tool sizes
 WORKLOAD_KINDS = {
     "deployments": ("apps/v1", "Deployment"),
@@ -34,7 +44,7 @@ ANNOTATION_EXCLUDE_CONTAINERS = "k8s-rightsizer-report/exclude-containers"
 def parse_cpu(value):
     """'250m' -> 0.25 cores, '2' -> 2.0"""
     value = str(value)
-    return float(value[:-1]) / 1000 if value.endswith("m") else float(value)
+    return float(value[:-1]) / MILLICORES_PER_CORE if value.endswith("m") else float(value)
 
 
 def parse_memory(value):
@@ -48,19 +58,23 @@ def parse_memory(value):
 
 
 def fmt_cpu(cores):
-    return f"{max(round(cores * 1000 / 25) * 25, 25)}m"  # round to 25m steps
+    millicores = cores * MILLICORES_PER_CORE / CPU_STEP_MILLICORES
+    return f"{max(round(millicores) * CPU_STEP_MILLICORES, CPU_STEP_MILLICORES)}m"
 
 
-def fmt_memory(b):
-    mi = max(round(b / 2**20 / 32) * 32, 32)  # round to 32Mi steps
-    return f"{mi}Mi"
+def fmt_memory(byte_count):
+    mebibytes = byte_count / 2**20 / MEMORY_STEP_MIB
+    return f"{max(round(mebibytes) * MEMORY_STEP_MIB, MEMORY_STEP_MIB)}Mi"
+
+
+def kubectl(args):
+    """Run kubectl and return its stdout. Every shell-out goes through here so
+    the failure behaviour (check=True) is decided in one place."""
+    return subprocess.run(["kubectl", *args], check=True, capture_output=True, text=True).stdout
 
 
 def kubectl_json(args):
-    out = subprocess.run(
-        ["kubectl", *args, "-o", "json"], check=True, capture_output=True, text=True
-    ).stdout
-    return json.loads(out)
+    return json.loads(kubectl([*args, "-o", "json"]))
 
 
 def fetch_workloads(namespace, kinds=WORKLOAD_KINDS):
@@ -68,19 +82,14 @@ def fetch_workloads(namespace, kinds=WORKLOAD_KINDS):
     kind this tool sizes (Deployment/StatefulSet/DaemonSet)."""
     workloads = []
     for resource, (api_version, kind) in kinds.items():
-        for w in kubectl_json(["get", resource, "-n", namespace])["items"]:
-            workloads.append((api_version, kind, w))
+        for item in kubectl_json(["get", resource, "-n", namespace])["items"]:
+            workloads.append((api_version, kind, item))
     return workloads
 
 
 def top_pods(namespace):
     """Return {pod: {container: {cpu, memory}}} from metrics-server."""
-    out = subprocess.run(
-        ["kubectl", "top", "pods", "-n", namespace, "--containers", "--no-headers"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    out = kubectl(["top", "pods", "-n", namespace, "--containers", "--no-headers"])
     usage = {}
     for line in out.splitlines():
         parts = line.split()
@@ -115,7 +124,7 @@ def prometheus_query(base_url, query, fetcher=default_http_get):
     return fetcher(url).get("data", {}).get("result", [])
 
 
-def top_pods_prometheus(namespace, base_url, days=7, fetcher=default_http_get):
+def top_pods_prometheus(namespace, base_url, days=DEFAULT_LOOKBACK_DAYS, fetcher=default_http_get):
     """Return {pod: {container: {cpu, memory}}}, p95 over `days` via PromQL
     quantile_over_time — same shape as top_pods() so it drops into
     aggregate_by_owner() unchanged."""
@@ -142,12 +151,11 @@ def aggregate_by_owner(usage):
     """Collapse pod-level usage to peak per (workload-prefix, container)."""
     peaks = {}
     for pod, containers in usage.items():
-        owner = pod.rsplit("-", 2)[0] if pod.count("-") >= 2 else pod
-        for container, u in containers.items():
-            key = (owner, container)
-            cur = peaks.setdefault(key, {"cpu": 0.0, "memory": 0.0})
-            cur["cpu"] = max(cur["cpu"], u["cpu"])
-            cur["memory"] = max(cur["memory"], u["memory"])
+        owner = pod.rsplit("-", POD_SUFFIX_PARTS)[0] if pod.count("-") >= POD_SUFFIX_PARTS else pod
+        for container, usage_of_container in containers.items():
+            peak = peaks.setdefault((owner, container), {"cpu": 0.0, "memory": 0.0})
+            peak["cpu"] = max(peak["cpu"], usage_of_container["cpu"])
+            peak["memory"] = max(peak["memory"], usage_of_container["memory"])
     return peaks
 
 
@@ -158,13 +166,13 @@ def vpa_recommendations(namespace):
     peaks = {}
     for vpa in kubectl_json(["get", "verticalpodautoscalers", "-n", namespace])["items"]:
         workload = vpa["spec"]["targetRef"]["name"]
-        for rec in (
+        for recommendation in (
             vpa.get("status", {}).get("recommendation", {}).get("containerRecommendations", [])
         ):
-            target = rec.get("target", {})
+            target = recommendation.get("target", {})
             if not target:
                 continue
-            peaks[(workload, rec["containerName"])] = {
+            peaks[(workload, recommendation["containerName"])] = {
                 "cpu": parse_cpu(target.get("cpu", "0")),
                 "memory": parse_memory(target.get("memory", "0")),
             }
@@ -183,29 +191,40 @@ def recommend(peak):
     }
 
 
+def sizable_containers(resource):
+    """The containers of one workload the pod-template exclude annotations
+    leave in scope; an excluded workload contributes none."""
+    template = resource["spec"]["template"]
+    annotations = template.get("metadata", {}).get("annotations", {}) or {}
+    if annotations.get(ANNOTATION_EXCLUDE, "").lower() == "true":
+        return []
+    excluded = {
+        excluded_name.strip()
+        for excluded_name in annotations.get(ANNOTATION_EXCLUDE_CONTAINERS, "").split(",")
+        if excluded_name.strip()
+    }
+    return [
+        container
+        for container in template["spec"]["containers"]
+        if container["name"] not in excluded
+    ]
+
+
 def build_report(workloads, peaks):
     """Yield rows: kind, workload, container, current requests, peak usage,
     recommendation. `workloads` is [(apiVersion, kind, resource_dict), ...];
     plain resource dicts (implicitly Deployment) are accepted too."""
     rows = []
-    for w in workloads:
-        api_version, kind, d = w if isinstance(w, tuple) else ("apps/v1", "Deployment", w)
-        name = d["metadata"]["name"]
-        annotations = d["spec"]["template"].get("metadata", {}).get("annotations", {}) or {}
-        if annotations.get(ANNOTATION_EXCLUDE, "").lower() == "true":
-            continue
-        excluded = {
-            c.strip()
-            for c in annotations.get(ANNOTATION_EXCLUDE_CONTAINERS, "").split(",")
-            if c.strip()
-        }
-        for c in d["spec"]["template"]["spec"]["containers"]:
-            if c["name"] in excluded:
-                continue
-            peak = peaks.get((name, c["name"]))
+    for workload in workloads:
+        api_version, kind, resource = (
+            workload if isinstance(workload, tuple) else ("apps/v1", "Deployment", workload)
+        )
+        name = resource["metadata"]["name"]
+        for container in sizable_containers(resource):
+            peak = peaks.get((name, container["name"]))
             if not peak:
                 continue
-            current = c.get("resources", {}).get("requests", {})
+            current = container.get("resources", {}).get("requests", {})
             rec = recommend(peak)
             cur_cpu = parse_cpu(current.get("cpu", "0"))
             rec_cpu = parse_cpu(rec["requests"]["cpu"])
@@ -214,7 +233,7 @@ def build_report(workloads, peaks):
                     "api_version": api_version,
                     "kind": kind,
                     "workload": name,
-                    "container": c["name"],
+                    "container": container["name"],
                     "current_requests": current or None,
                     "peak": {
                         "cpu": fmt_cpu(peak["cpu"]),
@@ -235,15 +254,18 @@ def render_report(rows, namespace):
         "| kind/workload/container | current req | peak usage | recommended req | Δ cpu |",
         "|---|---|---|---|---|",
     ]
-    for r in rows:
-        cur = r["current_requests"]
-        cur_s = f"{cur.get('cpu', '–')}/{cur.get('memory', '–')}" if cur else "(unset)"
-        rec = r["recommended"]["requests"]
-        delta = f"{r['cpu_change_pct']:+d}%" if r["cpu_change_pct"] is not None else "new"
+    for row in rows:
+        current = row["current_requests"]
+        current_cell = (
+            f"{current.get('cpu', '–')}/{current.get('memory', '–')}" if current else "(unset)"
+        )
+        recommended = row["recommended"]["requests"]
+        delta = f"{row['cpu_change_pct']:+d}%" if row["cpu_change_pct"] is not None else "new"
         lines.append(
-            f"| {r.get('kind', 'Deployment')}/{r['workload']}/{r['container']} | {cur_s} "
-            f"| {r['peak']['cpu']}/{r['peak']['memory']} "
-            f"| {rec['cpu']}/{rec['memory']} | {delta} |"
+            f"| {row.get('kind', 'Deployment')}/{row['workload']}/{row['container']} "
+            f"| {current_cell} "
+            f"| {row['peak']['cpu']}/{row['peak']['memory']} "
+            f"| {recommended['cpu']}/{recommended['memory']} | {delta} |"
         )
     return "\n".join(lines)
 
@@ -253,19 +275,19 @@ def render_diff(rows):
     import yaml
 
     docs = []
-    for r in rows:
+    for row in rows:
         docs.append(
             {
-                "apiVersion": r.get("api_version", "apps/v1"),
-                "kind": r.get("kind", "Deployment"),
-                "metadata": {"name": r["workload"]},
+                "apiVersion": row.get("api_version", "apps/v1"),
+                "kind": row.get("kind", "Deployment"),
+                "metadata": {"name": row["workload"]},
                 "spec": {
                     "template": {
                         "spec": {
                             "containers": [
                                 {
-                                    "name": r["container"],
-                                    "resources": r["recommended"],
+                                    "name": row["container"],
+                                    "resources": row["recommended"],
                                 }
                             ]
                         }
@@ -276,32 +298,36 @@ def render_diff(rows):
     return yaml.dump_all(docs, sort_keys=False)
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(
+def build_parser():
+    parser = argparse.ArgumentParser(
         prog="k8s-rightsizer-report",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--namespace", "-n", required=True)
-    p.add_argument("--diff", action="store_true", help="emit patch YAML instead of a report")
-    p.add_argument("--json", action="store_true")
-    p.add_argument(
+    parser.add_argument("--namespace", "-n", required=True)
+    parser.add_argument("--diff", action="store_true", help="emit patch YAML instead of a report")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument(
         "--prometheus",
         metavar="URL",
         help="use PromQL p95-over-time instead of a point-in-time kubectl top",
     )
-    p.add_argument(
+    parser.add_argument(
         "--days",
         type=int,
-        default=7,
-        help="lookback window for --prometheus (default: 7)",
+        default=DEFAULT_LOOKBACK_DAYS,
+        help=f"lookback window for --prometheus (default: {DEFAULT_LOOKBACK_DAYS})",
     )
-    p.add_argument(
+    parser.add_argument(
         "--vpa",
         action="store_true",
         help="use VerticalPodAutoscaler recommendations instead of metrics-server",
     )
-    args = p.parse_args(argv)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
 
     workloads = fetch_workloads(args.namespace)
     if args.vpa:
