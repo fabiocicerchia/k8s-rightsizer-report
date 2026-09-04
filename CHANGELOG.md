@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.2.1...v0.2.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **ci:** pin the editorconfig-checker binary version ([#61](https://github.com/fabiocicerchia/k8s-rightsizer-report/issues/61)) ([adff503](https://github.com/fabiocicerchia/k8s-rightsizer-report/commit/adff503cb7a0657ddb3c0787bb7f9021fc66402e))
+
 ## [0.2.1](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.2.0...v0.2.1) (2026-08-29)
 
 
