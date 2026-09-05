@@ -1,4 +1,4 @@
-.PHONY: install dev lint test build help
+.PHONY: install dev lint test build help setup run format analyze
 
 .DEFAULT_GOAL := help
 
@@ -12,11 +12,23 @@ install: ## Install the package
 dev: ## Editable install with dev dependencies
 	pip install -e ".[dev]"
 
-lint: ## Run ruff
-	ruff check .
+lint: ## Run the whole gate — every hook, every file
+	pre-commit run --all-files
 
 test: ## Run pytest
 	pytest -q
 
 build: ## Build sdist and wheel
 	python -m build
+
+setup: ## Install the pre-commit hook
+	pre-commit install
+
+run: ## Run k8s-rightsizer-report
+	k8s-rightsizer-report --help
+
+format: ## Rewrite the sources to canonical form
+	ruff format .
+
+analyze: ## Type-check the package
+	basedpyright
