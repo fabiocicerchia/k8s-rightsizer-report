@@ -14,9 +14,9 @@ loop that VPA recommendations leave open — getting the numbers *into the repo*
 ```console
 $ k8s-rightsizer-report -n app
 | kind/workload/container | current req | peak usage | recommended req | Δ cpu |
-|---|---|---|---|---|
-| Deployment/api/app     | 1000m/1Gi | 180m/210Mi | 250m/288Mi | -75% |
-| Deployment/worker/main | (unset)   | 350m/800Mi | 500m/1024Mi | new |
+| ----------------------- | ----------- | ---------- | --------------- | ----- |
+| Deployment/api/app      | 1000m/1Gi   | 180m/210Mi | 250m/288Mi      | -75%  |
+| Deployment/worker/main  | (unset)     | 350m/800Mi | 500m/1024Mi     | new   |
 
 $ k8s-rightsizer-report -n app --diff > rightsizing-patch.yaml   # commit this
 ```
