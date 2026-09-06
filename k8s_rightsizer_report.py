@@ -16,7 +16,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 HEADROOM = {"cpu": 1.4, "memory": 1.25}  # recommendation = peak usage * headroom
@@ -109,7 +109,7 @@ def fetch_workloads(
 ) -> list[tuple[str, str, Manifest]]:
     """Return [(apiVersion, kind, resource_dict), ...] across every workload
     kind this tool sizes (Deployment/StatefulSet/DaemonSet)."""
-    workloads = []
+    workloads: list[tuple[str, str, Manifest]] = []
     for resource, (api_version, kind) in kinds.items():
         for item in kubectl_json(["get", resource, "-n", namespace])["items"]:
             workloads.append((api_version, kind, item))
@@ -119,7 +119,7 @@ def fetch_workloads(
 def top_pods(namespace: str) -> Usage:
     """Return {pod: {container: {cpu, memory}}} from metrics-server."""
     out = kubectl(["top", "pods", "-n", namespace, "--containers", "--no-headers"])
-    usage = {}
+    usage: Usage = {}
     for line in out.splitlines():
         parts = line.split()
         if len(parts) >= _TOP_COLUMNS:
@@ -169,7 +169,7 @@ def top_pods_prometheus(
         "memory": f"quantile_over_time(0.95, container_memory_working_set_bytes"
         f'{{namespace="{namespace}",container!="",container!="POD"}}[{window}:5m])',
     }
-    usage = {}
+    usage: Usage = {}
     for metric, query in queries.items():
         for series in prometheus_query(base_url, query, fetcher):
             pod, container = series["metric"].get("pod"), series["metric"].get("container")
@@ -183,7 +183,7 @@ def top_pods_prometheus(
 
 def aggregate_by_owner(usage: Usage) -> Peaks:
     """Collapse pod-level usage to peak per (workload-prefix, container)."""
-    peaks = {}
+    peaks: Peaks = {}
     for pod, containers in usage.items():
         owner = pod.rsplit("-", POD_SUFFIX_PARTS)[0] if pod.count("-") >= POD_SUFFIX_PARTS else pod
         for container, usage_of_container in containers.items():
@@ -197,7 +197,7 @@ def vpa_recommendations(namespace: str) -> Peaks:
     """(workload, container) -> {cpu, memory} target from VerticalPodAutoscaler CRs —
     already a percentile-based recommendation, so it drops straight into the
     same `peaks` shape metrics-server/Prometheus produce."""
-    peaks = {}
+    peaks: Peaks = {}
     for vpa in kubectl_json(["get", "verticalpodautoscalers", "-n", namespace])["items"]:
         workload = vpa["spec"]["targetRef"]["name"]
         for recommendation in vpa.get("status", {}).get("recommendation", {}).get("containerRecommendations", []):
@@ -226,8 +226,9 @@ def recommend(peak: dict[str, float]) -> dict[str, dict[str, str]]:
 def sizable_containers(resource: Manifest) -> list[Manifest]:
     """The containers of one workload the pod-template exclude annotations
     leave in scope; an excluded workload contributes none."""
-    template = resource["spec"]["template"]
-    annotations = template.get("metadata", {}).get("annotations", {}) or {}
+    template: Manifest = resource["spec"]["template"]
+    metadata: Manifest = template.get("metadata") or {}
+    annotations: dict[str, str] = metadata.get("annotations") or {}
     if annotations.get(ANNOTATION_EXCLUDE, "").lower() == "true":
         return []
     excluded = {
@@ -238,11 +239,11 @@ def sizable_containers(resource: Manifest) -> list[Manifest]:
     return [container for container in template["spec"]["containers"] if container["name"] not in excluded]
 
 
-def build_report(workloads: list[tuple[str, str, Manifest] | Manifest], peaks: Peaks) -> list[Row]:
+def build_report(workloads: Sequence[tuple[str, str, Manifest] | Manifest], peaks: Peaks) -> list[Row]:
     """Yield rows: kind, workload, container, current requests, peak usage,
     recommendation. `workloads` is [(apiVersion, kind, resource_dict), ...];
     plain resource dicts (implicitly Deployment) are accepted too."""
-    rows = []
+    rows: list[Row] = []
     for workload in workloads:
         api_version, kind, resource = workload if isinstance(workload, tuple) else ("apps/v1", "Deployment", workload)
         name = resource["metadata"]["name"]
@@ -298,7 +299,7 @@ def render_diff(rows: list[Row]) -> str:
     # PyYAML installed.
     import yaml  # noqa: PLC0415
 
-    docs = []
+    docs: list[Manifest] = []
     for row in rows:
         docs.append(
             {
