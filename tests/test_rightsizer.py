@@ -13,20 +13,20 @@ from k8s_rightsizer_report import (
 )
 
 
-def test_unit_parsing_roundtrip():
+def test_unit_parsing_roundtrip() -> None:
     assert parse_cpu("250m") == 0.25
     assert parse_memory("256Mi") == 256 * 2**20
     assert fmt_cpu(0.26) == "275m" or fmt_cpu(0.26) == "250m"  # 25m rounding
     assert fmt_memory(300 * 2**20) == "288Mi" or fmt_memory(300 * 2**20) == "320Mi"
 
 
-def test_recommendation_adds_headroom():
+def test_recommendation_adds_headroom() -> None:
     rec = recommend({"cpu": 0.2, "memory": 256 * 2**20})
     assert parse_cpu(rec["requests"]["cpu"]) >= 0.2 * 1.4 - 0.025
     assert parse_cpu(rec["limits"]["cpu"]) > parse_cpu(rec["requests"]["cpu"])
 
 
-def test_aggregate_takes_peak_across_replicas():
+def test_aggregate_takes_peak_across_replicas() -> None:
     usage = {
         "api-6d9f8-abc12": {"app": {"cpu": 0.1, "memory": 100.0}},
         "api-6d9f8-def34": {"app": {"cpu": 0.3, "memory": 80.0}},
@@ -35,7 +35,7 @@ def test_aggregate_takes_peak_across_replicas():
     assert peaks[("api", "app")] == {"cpu": 0.3, "memory": 100.0}
 
 
-def test_report_flags_unset_requests():
+def test_report_flags_unset_requests() -> None:
     deployments = [
         {
             "metadata": {"name": "api"},
@@ -48,8 +48,8 @@ def test_report_flags_unset_requests():
     assert "(unset)" in render_report(rows, "app")
 
 
-def test_top_pods_prometheus_parses_p95_vectors():
-    def fake_fetcher(url):
+def test_top_pods_prometheus_parses_p95_vectors() -> None:
+    def fake_fetcher(url: str) -> dict[str, object]:
         metric = "cpu" if "container_cpu_usage_seconds_total" in url else "memory"
         value = "0.3" if metric == "cpu" else str(300 * 2**20)
         return {
@@ -67,7 +67,7 @@ def test_top_pods_prometheus_parses_p95_vectors():
     assert usage == {"api-abc": {"app": {"cpu": 0.3, "memory": 300 * 2**20}}}
 
 
-def test_build_report_tags_statefulset_kind():
+def test_build_report_tags_statefulset_kind() -> None:
     workloads = [
         (
             "apps/v1",
@@ -85,7 +85,7 @@ def test_build_report_tags_statefulset_kind():
     assert "kind: StatefulSet" in m.render_diff(rows)
 
 
-def test_build_report_skips_excluded_workload():
+def test_build_report_skips_excluded_workload() -> None:
     workloads = [
         (
             "apps/v1",
@@ -105,7 +105,7 @@ def test_build_report_skips_excluded_workload():
     assert build_report(workloads, peaks) == []
 
 
-def test_build_report_skips_excluded_container():
+def test_build_report_skips_excluded_container() -> None:
     workloads = [
         (
             "apps/v1",
@@ -114,11 +114,7 @@ def test_build_report_skips_excluded_container():
                 "metadata": {"name": "api"},
                 "spec": {
                     "template": {
-                        "metadata": {
-                            "annotations": {
-                                m.ANNOTATION_EXCLUDE_CONTAINERS: "istio-proxy, vault-agent"
-                            }
-                        },
+                        "metadata": {"annotations": {m.ANNOTATION_EXCLUDE_CONTAINERS: "istio-proxy, vault-agent"}},
                         "spec": {"containers": [{"name": "app"}, {"name": "istio-proxy"}]},
                     }
                 },
@@ -133,8 +129,8 @@ def test_build_report_skips_excluded_container():
     assert {r["container"] for r in rows} == {"app"}
 
 
-def test_vpa_recommendations_reads_target(monkeypatch):
-    def fake_kubectl_json(args):
+def test_vpa_recommendations_reads_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_kubectl_json(args: list[str]) -> dict[str, object]:
         assert args == ["get", "verticalpodautoscalers", "-n", "prod"]
         return {
             "items": [
@@ -163,9 +159,7 @@ def test_vpa_recommendations_reads_target(monkeypatch):
 # documented as an HTTP endpoint, and its value can arrive from a config file
 # or a CI variable rather than a person's shell, so a non-HTTP scheme has to be
 # refused rather than fetched.
-@pytest.mark.parametrize(
-    "url", ["file:///etc/passwd", "ftp://host/x", "data:text/plain,x", "/etc/passwd", ""]
-)
-def test_default_http_get_refuses_non_http_schemes(url):
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://host/x", "data:text/plain,x", "/etc/passwd", ""])
+def test_default_http_get_refuses_non_http_schemes(url) -> None:
     with pytest.raises(ValueError, match="http\\(s\\) URL"):
         m.default_http_get(url)
