@@ -6,7 +6,7 @@ renders a rightsizing report or patch YAML.
 
 ## Overview
 
-```
+```text
 metrics-server (kubectl top) ─▶ usage snapshot ─▶ headroom model ─▶ report / patch YAML / JSON
 ```
 
@@ -26,11 +26,11 @@ metrics-server (kubectl top) ─▶ usage snapshot ─▶ headroom model ─▶ 
 ## Data flow
 
 1. Query the selected usage source for per-container CPU and memory.
-2. Compare against current requests from `kubectl get deployments,
+1. Compare against current requests from `kubectl get deployments,
    statefulsets, daemonsets -o json`, minus anything the exclude annotations
    opt out.
-3. Apply headroom model to compute recommendations.
-4. Render in the requested format (table / `--diff` / `--json`).
+1. Apply headroom model to compute recommendations.
+1. Render in the requested format (table / `--diff` / `--json`).
 
 ## Decisions
 
