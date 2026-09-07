@@ -15,10 +15,10 @@ make test    # pytest
 ## Pull requests
 
 1. Fork and create a topic branch.
-2. Make your change, keeping the existing style; add or update tests.
-3. Make sure `make lint` and `make test` pass locally.
-4. Add an entry under `[Unreleased]` in `CHANGELOG.md` for user-visible changes.
-5. Open a PR with a clear description of the problem and the solution.
+1. Make your change, keeping the existing style; add or update tests.
+1. Make sure `make lint` and `make test` pass locally.
+1. Add an entry under `[Unreleased]` in `CHANGELOG.md` for user-visible changes.
+1. Open a PR with a clear description of the problem and the solution.
 
 ## Releases
 

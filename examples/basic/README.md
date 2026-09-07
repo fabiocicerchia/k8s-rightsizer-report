@@ -23,11 +23,11 @@ k8s-rightsizer-report -n default --json | jq .
 
 ## Expected output
 
-```
-| kind/workload/container   | current req   | peak usage  | recommended req | Δ cpu |
-|---|---|---|---|---|
-| Deployment/api/app        | 1000m/1Gi     | 180m/210Mi  | 250m/288Mi      | -75%  |
-| Deployment/worker/main    | (unset)       | 350m/800Mi  | 500m/1024Mi     | new   |
+```text
+| kind/workload/container | current req | peak usage | recommended req | Δ cpu |
+| ----------------------- | ----------- | ---------- | --------------- | ----- |
+| Deployment/api/app      | 1000m/1Gi   | 180m/210Mi | 250m/288Mi      | -75%  |
+| Deployment/worker/main  | (unset)     | 350m/800Mi | 500m/1024Mi     | new   |
 ```
 
 Every container with observed usage is listed; a container metrics-server has
