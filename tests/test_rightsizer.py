@@ -160,6 +160,6 @@ def test_vpa_recommendations_reads_target(monkeypatch: pytest.MonkeyPatch) -> No
 # or a CI variable rather than a person's shell, so a non-HTTP scheme has to be
 # refused rather than fetched.
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://host/x", "data:text/plain,x", "/etc/passwd", ""])
-def test_default_http_get_refuses_non_http_schemes(url) -> None:
+def test_default_http_get_refuses_non_http_schemes(url: str) -> None:
     with pytest.raises(ValueError, match="http\\(s\\) URL"):
         m.default_http_get(url)
