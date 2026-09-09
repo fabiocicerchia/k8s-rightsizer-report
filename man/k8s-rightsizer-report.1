@@ -1,0 +1,59 @@
+.TH K8S\-RIGHTSIZER\-REPORT 1 "2026-09" "k8s-rightsizer-report" "User Commands"
+.SH NAME
+k8s-rightsizer-report \- turn live Kubernetes usage into PR-ready requests and limits
+.SH SYNOPSIS
+.B k8s-rightsizer-report
+.RI [ options ]
+.SH DESCRIPTION
+Reads the requests and limits currently set on deployments and the usage
+actually observed, recommends new values with headroom, and emits either a
+report or a unified YAML diff you can commit.
+.PP
+Usage comes from metrics-server by default, or from Prometheus (p95 over a
+window) or from VerticalPodAutoscaler recommendations.
+.SH OPTIONS
+.TP
+.BI \-n " NS" ", " \-\-namespace " NS"
+Namespace to analyse.
+.TP
+.B \-\-diff
+Emit patch YAML instead of a report.
+.TP
+.B \-\-json
+Machine-readable output.
+.TP
+.BI \-\-prometheus " URL"
+Use a PromQL p95-over-time instead of a point-in-time
+.BR "kubectl top" .
+.TP
+.BI \-\-days " N"
+Lookback window for
+.BR \-\-prometheus .
+.TP
+.B \-\-vpa
+Use VerticalPodAutoscaler recommendations instead of metrics-server.
+.SH EXIT STATUS
+.TP
+.B 0
+A report or diff was produced.
+.TP
+.B non-zero
+The cluster or metrics source could not be read.
+.SH EXAMPLES
+.PP
+Report on one namespace:
+.PP
+.RS
+.B k8s-rightsizer-report \-n payments
+.RE
+.PP
+A committable patch, from a fortnight of Prometheus data:
+.PP
+.RS
+.B k8s-rightsizer-report \-n payments \-\-prometheus http://prom:9090 \-\-days 14 \-\-diff
+.RE
+.SH SEE ALSO
+.BR kubectl (1).
+Project documentation:
+.UR https://github.com/fabiocicerchia/k8s-rightsizer-report
+.UE
