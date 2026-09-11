@@ -5,9 +5,14 @@ Guidance for Claude Code (and other AI agents) working in this repo.
 ## Project
 
 k8s-rightsizer-report is a single-file Python 3.10+ CLI (`k8s_rightsizer_report.py`,
-entry point `k8s_rightsizer_report:main`) that generates a human-readable
-rightsizing report from Kubernetes metrics-server data — turning peak usage
-snapshots into PR-ready requests/limits changes or patch YAML.
+entry point `k8s_rightsizer_report:main`). [KRR](https://github.com/robusta-dev/krr)
+is the engine: it reads Prometheus history and computes the recommendations. This
+tool records every KRR run in a committed history directory, proposes only the
+recommendations that have stayed within a tolerance for N consecutive runs, and
+emits Kustomize patches, a Helm values diff, or a pull request.
+
+The stability rule is the product. It is deliberately visible in every output,
+and there is deliberately no `--apply` — don't add one.
 
 ## Commands
 
