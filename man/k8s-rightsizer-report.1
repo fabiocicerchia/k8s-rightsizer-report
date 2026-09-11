@@ -1,58 +1,130 @@
 .TH K8S\-RIGHTSIZER\-REPORT 1 "2026-09" "k8s-rightsizer-report" "User Commands"
 .SH NAME
-k8s-rightsizer-report \- turn live Kubernetes usage into PR-ready requests and limits
+k8s\-rightsizer\-report \- turn KRR recommendations into reviewable requests and limits
 .SH SYNOPSIS
 .B k8s-rightsizer-report
 .RI [ options ]
 .SH DESCRIPTION
-Reads the requests and limits currently set on deployments and the usage
-actually observed, recommends new values with headroom, and emits either a
-report or a unified YAML diff you can commit.
+KRR (robusta\-dev/krr) reads Prometheus history and does the sizing maths. This
+tool does not size anything: it records every KRR run in a directory meant to be
+committed, proposes only the recommendations that have stopped moving, and emits
+those as Kustomize strategic\-merge patches, a Helm values diff, or a pull
+request.
 .PP
-Usage comes from metrics-server by default, or from Prometheus (p95 over a
-window) or from VerticalPodAutoscaler recommendations.
+A recommendation is proposed only once it has stayed within
+.B \-\-tolerance
+per cent across
+.B \-\-runs
+consecutive runs. Anything still moving is reported as
+.RB \(lq "not yet \(em flapping" \(rq
+together with the range it has been moving over.
+.PP
+There is no
+.BR \-\-apply .
+The cluster changes when the pull request merges and the GitOps tooling rolls it
+out, not when this runs.
 .SH OPTIONS
 .TP
 .BI \-n " NS" ", " \-\-namespace " NS"
-Namespace to analyse.
+Namespace to scan. Passed to krr; filters a
+.B \-\-krr\-json
+file.
 .TP
-.B \-\-diff
-Emit patch YAML instead of a report.
+.BI \-\-krr\-json " FILE"
+Read
+.B krr simple \-\-formatter json
+output from
+.IR FILE ,
+or from standard input when it is
+.BR \- .
+Without this, krr is run for you when it is on PATH.
+.TP
+.BI \-\-krr\-arg " ARG"
+Extra argument passed through to krr. Repeatable.
+.TP
+.BI \-\-history\-dir " DIR"
+Where runs are recorded (default:
+.BR .rightsizer/history ).
+Commit it: it is the only state this tool keeps.
+.TP
+.BI \-\-patch\-dir " DIR"
+Where patches are written by
+.B \-\-write
+and
+.B \-\-pr
+(default:
+.BR .rightsizer/patches ).
+.TP
+.BI \-\-tolerance " PCT"
+A recommendation counts as unchanged within this per cent (default: 15).
+.TP
+.BI \-\-runs " N"
+Consecutive runs within
+.B \-\-tolerance
+before a recommendation is proposed (default: 3).
+.TP
+.B \-\-no\-record
+Do not store this run in the history.
+.TP
+.BI \-\-helm\-values " FILE"
+Update this chart's values file instead of emitting patches, and print the
+change as a unified diff.
+.TP
+.BI \-\-helm\-key " W[/C]=PATH"
+Where a workload's (or container's) resources live in the values file, as a
+dotted path. Repeatable.
+.TP
+.B \-\-write
+Write the patches or the values update to disk.
+.TP
+.B \-\-pr
+Commit the change and the run file on a new branch and open a pull request with
+the
+.BR gh (1)
+CLI.
+.TP
+.BI \-\-branch " NAME"
+Branch name for
+.B \-\-pr
+(default:
+.BR rightsizer/<timestamp> ).
 .TP
 .B \-\-json
-Machine-readable output.
-.TP
-.BI \-\-prometheus " URL"
-Use a PromQL p95-over-time instead of a point-in-time
-.BR "kubectl top" .
-.TP
-.BI \-\-days " N"
-Lookback window for
-.BR \-\-prometheus .
-.TP
-.B \-\-vpa
-Use VerticalPodAutoscaler recommendations instead of metrics-server.
+Machine\-readable output.
 .SH EXIT STATUS
 .TP
 .B 0
-A report or diff was produced.
+A report was produced.
 .TP
 .B non-zero
-The cluster or metrics source could not be read.
+KRR could not be run or read, or the history could not be read.
 .SH EXAMPLES
 .PP
-Report on one namespace:
+Run krr, record the run, see what has settled:
 .PP
 .RS
 .B k8s-rightsizer-report \-n payments
 .RE
 .PP
-A committable patch, from a fortnight of Prometheus data:
+Ingest a saved run, with a stricter rule:
 .PP
 .RS
-.B k8s-rightsizer-report \-n payments \-\-prometheus http://prom:9090 \-\-days 14 \-\-diff
+.B k8s-rightsizer-report \-\-krr-json krr.json \-\-tolerance 5 \-\-runs 5
+.RE
+.PP
+Open the pull request:
+.PP
+.RS
+.B k8s-rightsizer-report \-n payments \-\-pr
 .RE
 .SH SEE ALSO
+.BR gh (1),
 .BR kubectl (1).
+KRR, the engine:
+https://github.com/robusta-dev/krr
+.PP
+Goldilocks, the VPA-based alternative:
+https://github.com/FairwindsOps/goldilocks
+.PP
 Project documentation:
 https://github.com/fabiocicerchia/k8s-rightsizer-report

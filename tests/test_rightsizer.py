@@ -1,165 +1,539 @@
+"""Fixture KRR runs -> stable / flapping classification -> patches.
+
+The stability rule is the whole product, so most of what is asserted here is
+"which recommendations does a sequence of runs let through, and why".
+"""
+
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import pytest
+import yaml
 
 import k8s_rightsizer_report as m
 from k8s_rightsizer_report import (
-    aggregate_by_owner,
-    build_report,
+    Rule,
+    classify,
     fmt_cpu,
     fmt_memory,
+    kustomize_patches,
+    load_history,
+    normalise,
     parse_cpu,
     parse_memory,
-    recommend,
-    render_report,
+    stability,
+    within_tolerance,
 )
 
-
-def test_unit_parsing_roundtrip() -> None:
-    assert parse_cpu("250m") == 0.25
-    assert parse_memory("256Mi") == 256 * 2**20
-    assert fmt_cpu(0.26) == "275m" or fmt_cpu(0.26) == "250m"  # 25m rounding
-    assert fmt_memory(300 * 2**20) == "288Mi" or fmt_memory(300 * 2**20) == "320Mi"
+MIB = 2**20
+EPOCH = datetime(2026, 9, 1, 6, 0, 0, tzinfo=timezone.utc)
 
 
-def test_recommendation_adds_headroom() -> None:
-    rec = recommend({"cpu": 0.2, "memory": 256 * 2**20})
-    assert parse_cpu(rec["requests"]["cpu"]) >= 0.2 * 1.4 - 0.025
-    assert parse_cpu(rec["limits"]["cpu"]) > parse_cpu(rec["requests"]["cpu"])
-
-
-def test_aggregate_takes_peak_across_replicas() -> None:
-    usage = {
-        "api-6d9f8-abc12": {"app": {"cpu": 0.1, "memory": 100.0}},
-        "api-6d9f8-def34": {"app": {"cpu": 0.3, "memory": 80.0}},
+def krr_scan(
+    workload: str = "api",
+    container: str = "app",
+    kind: str = "Deployment",
+    namespace: str = "prod",
+    *,
+    cpu: float = 0.1,
+    memory: float = 100 * MIB,
+    current_cpu: float = 1.0,
+    current_memory: float = 1024 * MIB,
+    cost: dict[str, float] | None = None,
+) -> dict[str, object]:
+    """One entry of `krr simple --formatter json`'s `scans` list."""
+    scan: dict[str, object] = {
+        "object": {
+            "cluster": "staging",
+            "name": workload,
+            "container": container,
+            "namespace": namespace,
+            "kind": kind,
+            "allocations": {
+                "requests": {"cpu": current_cpu, "memory": current_memory},
+                "limits": {"cpu": None, "memory": current_memory * 2},
+                "info": {},
+            },
+        },
+        "recommended": {
+            "requests": {
+                "cpu": {"value": cpu, "severity": "CRITICAL"},
+                "memory": {"value": memory, "severity": "WARNING"},
+            },
+            "limits": {
+                "cpu": {"value": None, "severity": "GOOD"},
+                "memory": {"value": memory, "severity": "WARNING"},
+            },
+            "info": {},
+        },
+        "severity": "CRITICAL",
     }
-    peaks = aggregate_by_owner(usage)
-    assert peaks[("api", "app")] == {"cpu": 0.3, "memory": 100.0}
+    if cost is not None:
+        scan["cost"] = cost
+    return scan
 
 
-def test_report_flags_unset_requests() -> None:
-    deployments = [
-        {
-            "metadata": {"name": "api"},
-            "spec": {"template": {"spec": {"containers": [{"name": "app"}]}}},
-        }
+def krr_document(*scans: dict[str, object]) -> dict[str, object]:
+    return {"scans": list(scans), "score": 71, "resources": ["cpu", "memory"], "errors": [], "strategy": {}}
+
+
+def record(history_dir: Path, document: dict[str, object], index: int = 0) -> Path:
+    """Record a run, one hour apart so the filenames sort as they happened."""
+    when = EPOCH + timedelta(hours=index)
+    return m.write_run(history_dir, m.as_run(normalise(document), "test", when), when)
+
+
+# ----------------------------------------------------------------- ingestion
+
+
+def test_normalise_reads_krr_values_and_allocations() -> None:
+    recommendations = normalise(krr_document(krr_scan()))
+    recommendation = recommendations["prod/Deployment/api/app"]
+    assert recommendation["proposed"]["requests"] == {"cpu": 0.1, "memory": float(100 * MIB)}
+    assert recommendation["current"]["requests"] == {"cpu": 1.0, "memory": float(1024 * MIB)}
+    # KRR deliberately recommends no CPU limit; that stays unset rather than invented.
+    assert recommendation["proposed"]["limits"]["cpu"] is None
+    assert recommendation["severity"] == "CRITICAL"
+
+
+def test_normalise_tolerates_quantity_strings_and_unknowns() -> None:
+    scan = krr_scan()
+    scan["object"]["allocations"]["requests"] = {"cpu": "250m", "memory": "256Mi"}  # type: ignore[index]
+    scan["recommended"]["requests"]["cpu"] = {"value": "?", "severity": "UNKNOWN"}  # type: ignore[index]
+    recommendation = normalise(krr_document(scan))["prod/Deployment/api/app"]
+    assert recommendation["current"]["requests"] == {"cpu": 0.25, "memory": float(256 * MIB)}
+    assert recommendation["proposed"]["requests"]["cpu"] is None
+
+
+def test_normalise_filters_by_namespace() -> None:
+    document = krr_document(krr_scan(namespace="prod"), krr_scan(workload="other", namespace="staging"))
+    assert set(normalise(document, "staging")) == {"staging/Deployment/other/app"}
+
+
+def test_parse_krr_output_skips_a_banner_before_the_json() -> None:
+    text = "krr is scanning {this is not json}\n" + '{"scans": [], "score": 100}'
+    assert m.parse_krr_output(text) == {"scans": [], "score": 100}
+
+
+def test_parse_krr_output_rejects_output_with_no_document() -> None:
+    with pytest.raises(ValueError, match="no krr JSON document"):
+        m.parse_krr_output("krr: connection refused")
+
+
+# ------------------------------------------------------------------- history
+
+
+def test_history_round_trips_runs_oldest_first(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan(cpu=0.1 + index / 100)), index)
+    runs = load_history(tmp_path)
+    assert [run["recorded_at"] for run in runs] == [
+        "2026-09-01T06:00:00Z",
+        "2026-09-01T07:00:00Z",
+        "2026-09-01T08:00:00Z",
     ]
-    peaks = {("api", "app"): {"cpu": 0.2, "memory": 128 * 2**20}}
-    rows = build_report(deployments, peaks)
-    assert rows[0]["current_requests"] is None
-    assert "(unset)" in render_report(rows, "app")
+    assert len(list(tmp_path.glob("*.json"))) == 3
 
 
-def test_top_pods_prometheus_parses_p95_vectors() -> None:
-    def fake_fetcher(url: str) -> dict[str, object]:
-        metric = "cpu" if "container_cpu_usage_seconds_total" in url else "memory"
-        value = "0.3" if metric == "cpu" else str(300 * 2**20)
-        return {
-            "data": {
-                "result": [
-                    {
-                        "metric": {"pod": "api-abc", "container": "app"},
-                        "value": [0, value],
-                    }
-                ]
-            }
-        }
-
-    usage = m.top_pods_prometheus("prod", "http://prom:9090", days=7, fetcher=fake_fetcher)
-    assert usage == {"api-abc": {"app": {"cpu": 0.3, "memory": 300 * 2**20}}}
+def test_two_runs_in_the_same_second_do_not_overwrite_each_other(tmp_path: Path) -> None:
+    """Overwriting a run would quietly shorten a streak, so the second one takes
+    a suffix — and the suffix still sorts after the run it followed."""
+    first = record(tmp_path, krr_document(krr_scan(cpu=0.1)), 0)
+    second = m.write_run(tmp_path, m.as_run(normalise(krr_document(krr_scan(cpu=0.2))), "test", EPOCH), EPOCH)
+    assert first != second
+    assert sorted(path.name for path in tmp_path.glob("*.json")) == [first.name, second.name]
+    assert [
+        run["recommendations"]["prod/Deployment/api/app"]["proposed"]["requests"]["cpu"]
+        for run in load_history(tmp_path)
+    ] == [0.1, 0.2]
 
 
-def test_build_report_tags_statefulset_kind() -> None:
-    workloads = [
-        (
-            "apps/v1",
-            "StatefulSet",
-            {
-                "metadata": {"name": "cache"},
-                "spec": {"template": {"spec": {"containers": [{"name": "app"}]}}},
-            },
-        )
-    ]
-    peaks = {("cache", "app"): {"cpu": 0.2, "memory": 128 * 2**20}}
-    rows = build_report(workloads, peaks)
-    assert rows[0]["kind"] == "StatefulSet"
-    assert "StatefulSet/cache/app" in m.render_report(rows, "ns")
-    assert "kind: StatefulSet" in m.render_diff(rows)
+def test_load_history_refuses_a_corrupt_run(tmp_path: Path) -> None:
+    record(tmp_path, krr_document(krr_scan()))
+    (tmp_path / "2026-09-02T06-00-00Z.json").write_text("{ this is not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="not readable as a recorded run"):
+        load_history(tmp_path)
 
 
-def test_build_report_skips_excluded_workload() -> None:
-    workloads = [
-        (
-            "apps/v1",
-            "Deployment",
-            {
-                "metadata": {"name": "api"},
-                "spec": {
-                    "template": {
-                        "metadata": {"annotations": {m.ANNOTATION_EXCLUDE: "true"}},
-                        "spec": {"containers": [{"name": "app"}]},
-                    }
-                },
-            },
-        )
-    ]
-    peaks = {("api", "app"): {"cpu": 0.2, "memory": 128 * 2**20}}
-    assert build_report(workloads, peaks) == []
+# ----------------------------------------------------------------- stability
 
 
-def test_build_report_skips_excluded_container() -> None:
-    workloads = [
-        (
-            "apps/v1",
-            "Deployment",
-            {
-                "metadata": {"name": "api"},
-                "spec": {
-                    "template": {
-                        "metadata": {"annotations": {m.ANNOTATION_EXCLUDE_CONTAINERS: "istio-proxy, vault-agent"}},
-                        "spec": {"containers": [{"name": "app"}, {"name": "istio-proxy"}]},
-                    }
-                },
-            },
-        )
-    ]
-    peaks = {
-        ("api", "app"): {"cpu": 0.2, "memory": 128 * 2**20},
-        ("api", "istio-proxy"): {"cpu": 0.1, "memory": 64 * 2**20},
+def test_within_tolerance_counts_small_moves_as_unchanged() -> None:
+    assert within_tolerance([100.0, 110.0], 15)
+    assert not within_tolerance([100.0, 120.0], 15)
+    # A dimension KRR never sizes is stable; one that appears and disappears is not.
+    assert within_tolerance([None, None], 15)
+    assert not within_tolerance([None, 100.0], 15)
+
+
+def test_three_steady_runs_are_proposed(tmp_path: Path) -> None:
+    for index, cpu in enumerate([0.100, 0.105, 0.110]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu)), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert [r["key"] for r in proposed] == ["prod/Deployment/api/app"]
+    assert held == []
+    assert proposed[0]["status"] == "stable for 3 runs"
+
+
+def test_two_steady_runs_are_not_yet_proposed(tmp_path: Path) -> None:
+    for index, cpu in enumerate([0.100, 0.105]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu)), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert proposed == []
+    assert held[0]["status"] == "not yet — 2 of 3 runs"
+
+
+def test_an_oscillating_recommendation_is_reported_as_flapping(tmp_path: Path) -> None:
+    for index, cpu in enumerate([0.100, 0.400, 0.120, 0.500]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu)), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert proposed == []
+    assert held[0]["status"] == "not yet — flapping"
+    assert held[0]["stability"]["streak"] == 1
+    # The range is the evidence: a reviewer can judge the verdict, not just take it.
+    assert m.range_text(held[0]["stability"]).startswith("requests.cpu 120m–500m (+317%)")
+
+
+def test_a_settled_recommendation_survives_an_old_swing(tmp_path: Path) -> None:
+    """Three steady runs propose even when the history before them was wild."""
+    for index, cpu in enumerate([0.900, 0.100, 0.100, 0.105, 0.108]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu)), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    assert proposed[0]["stability"]["streak"] == 4
+
+
+def test_a_gap_in_the_history_breaks_the_streak(tmp_path: Path) -> None:
+    """A workload that vanished and came back has not been stable across the gap."""
+    record(tmp_path, krr_document(krr_scan(cpu=0.1)), 0)
+    record(tmp_path, krr_document(), 1)  # workload absent from this scan
+    record(tmp_path, krr_document(krr_scan(cpu=0.1)), 2)
+    record(tmp_path, krr_document(krr_scan(cpu=0.1)), 3)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert proposed == []
+    assert held[0]["status"] == "not yet — 2 of 3 runs"
+
+
+def test_memory_flapping_holds_back_a_steady_cpu(tmp_path: Path) -> None:
+    for index, memory in enumerate([100 * MIB, 100 * MIB, 400 * MIB]):
+        record(tmp_path, krr_document(krr_scan(cpu=0.1, memory=memory)), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert proposed == []
+    assert "requests.memory 100Mi–400Mi" in m.range_text(held[0]["stability"])
+
+
+def test_the_range_names_the_dimension_that_moved(tmp_path: Path) -> None:
+    """A steady memory number should not bury the CPU number that is swinging."""
+    for index, cpu in enumerate([0.1, 0.4, 0.1]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu)), index)
+    _proposed, held = classify(load_history(tmp_path), Rule())
+    assert m.range_text(held[0]["stability"]) == "requests.cpu 100m–400m (+300%)"
+
+
+def test_tolerance_and_run_count_are_configurable(tmp_path: Path) -> None:
+    for index, cpu in enumerate([0.10, 0.15]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu)), index)
+    assert classify(load_history(tmp_path), Rule(tolerance_pct=15, runs=3))[0] == []
+    proposed, _held = classify(load_history(tmp_path), Rule(tolerance_pct=60, runs=2))
+    assert [r["key"] for r in proposed] == ["prod/Deployment/api/app"]
+
+
+def test_stability_of_an_unknown_key_is_zero() -> None:
+    assert stability([], "prod/Deployment/ghost/app", Rule()) == {
+        "runs_seen": 0,
+        "streak": 0,
+        "stable": False,
+        "ranges": {},
     }
-    rows = build_report(workloads, peaks)
-    assert {r["container"] for r in rows} == {"app"}
 
 
-def test_vpa_recommendations_reads_target(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_kubectl_json(args: list[str]) -> dict[str, object]:
-        assert args == ["get", "verticalpodautoscalers", "-n", "prod"]
-        return {
-            "items": [
-                {
-                    "spec": {"targetRef": {"name": "api"}},
-                    "status": {
-                        "recommendation": {
-                            "containerRecommendations": [
-                                {
-                                    "containerName": "app",
-                                    "target": {"cpu": "300m", "memory": "256Mi"},
-                                }
-                            ]
+# -------------------------------------------------------------------- output
+
+
+def test_patches_carry_only_what_krr_sized(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan()), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    (filename, patch), *rest = kustomize_patches(proposed)
+    assert rest == []
+    assert filename == "prod-deployment-api.yaml"
+    assert patch == {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "api", "namespace": "prod"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "app",
+                            "resources": {
+                                "requests": {"cpu": "100m", "memory": "100Mi"},
+                                # No CPU limit: KRR proposes none, so the patch sets none.
+                                "limits": {"memory": "100Mi"},
+                            },
                         }
-                    },
+                    ]
                 }
-            ]
-        }
-
-    monkeypatch.setattr(m, "kubectl_json", fake_kubectl_json)
-    peaks = m.vpa_recommendations("prod")
-    assert peaks == {("api", "app"): {"cpu": 0.3, "memory": 256 * 2**20}}
+            }
+        },
+    }
 
 
-# urlopen honours file:, ftp: and data: as readily as http:. --prometheus is
-# documented as an HTTP endpoint, and its value can arrive from a config file
-# or a CI variable rather than a person's shell, so a non-HTTP scheme has to be
-# refused rather than fetched.
-@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://host/x", "data:text/plain,x", "/etc/passwd", ""])
-def test_default_http_get_refuses_non_http_schemes(url: str) -> None:
-    with pytest.raises(ValueError, match="http\\(s\\) URL"):
-        m.default_http_get(url)
+def test_one_patch_per_workload_with_every_stable_container(tmp_path: Path) -> None:
+    document = krr_document(
+        krr_scan(container="app"),
+        krr_scan(container="sidecar", cpu=0.02, memory=32 * MIB),
+        krr_scan(workload="cache", kind="StatefulSet"),
+    )
+    for index in range(3):
+        record(tmp_path, document, index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    patches = dict(kustomize_patches(proposed))
+    assert set(patches) == {"prod-deployment-api.yaml", "prod-statefulset-cache.yaml"}
+    containers = patches["prod-deployment-api.yaml"]["spec"]["template"]["spec"]["containers"]
+    assert [container["name"] for container in containers] == ["app", "sidecar"]
+    assert patches["prod-statefulset-cache.yaml"]["kind"] == "StatefulSet"
+
+
+def test_a_flapping_container_stays_out_of_its_workload_patch(tmp_path: Path) -> None:
+    for index, cpu in enumerate([0.02, 0.30, 0.02]):
+        record(tmp_path, krr_document(krr_scan(container="app"), krr_scan(container="sidecar", cpu=cpu)), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    (_filename, patch), *_ = kustomize_patches(proposed)
+    assert [c["name"] for c in patch["spec"]["template"]["spec"]["containers"]] == ["app"]
+    assert [r["container"] for r in held] == ["sidecar"]
+
+
+def test_cronjob_patch_nests_the_pod_template_under_jobtemplate(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan(workload="nightly", kind="CronJob")), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    (_filename, patch), *_ = kustomize_patches(proposed)
+    assert patch["apiVersion"] == "batch/v1"
+    assert "containers" in patch["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+
+def test_render_patches_is_loadable_yaml(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan(), krr_scan(workload="worker")), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    documents = [doc for doc in yaml.safe_load_all(m.render_patches(kustomize_patches(proposed))) if doc]
+    assert [doc["metadata"]["name"] for doc in documents] == ["api", "worker"]
+
+
+def test_report_shows_the_rule_and_both_verdicts(tmp_path: Path) -> None:
+    for index, cpu in enumerate([0.1, 0.1, 0.1]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu), krr_scan(workload="worker", cpu=cpu * (index + 1))), index)
+    runs = load_history(tmp_path)
+    proposed, held = classify(runs, Rule())
+    report = m.render_report(proposed, held, Rule(), tmp_path, len(runs))
+    assert "stayed within 15% across 3 consecutive runs" in report
+    assert "## Proposed (1)" in report
+    assert "## Not yet (1)" in report
+    assert "not yet — flapping" in report
+
+
+def test_pr_body_links_the_history_file_and_counts_the_runs(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan(cost={"current": 30.0, "recommended": 8.5})), index)
+    runs = load_history(tmp_path)
+    proposed, held = classify(runs, Rule())
+    run_path = Path(".rightsizer/history/2026-09-01T08-00-00Z.json")
+    body = m.render_pr_body(proposed, held, Rule(), m.Target("rightsizer/x", "acme/infra", run_path))
+    assert "| 3 runs |" in body  # the stability streak, per container
+    assert "1000m/1024Mi → 100m/100Mi" in body
+    assert "**21.50/month**" in body
+    assert f"https://github.com/acme/infra/blob/rightsizer/x/{run_path.as_posix()}" in body
+
+
+def test_saving_is_dropped_when_krr_does_not_cost_the_workload(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan()), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    assert m.monthly_saving(proposed) is None
+
+
+# ---------------------------------------------------------------- helm mode
+
+
+def test_helm_values_diff_sets_resources_under_the_workload_key(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan()), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    values: dict[str, object] = {"api": {"replicaCount": 2, "resources": {"requests": {"cpu": "1", "memory": "1Gi"}}}}
+    updated, written, unmatched = m.helm_values_update(values, proposed, {})
+    assert written == ["api.resources"]
+    assert unmatched == []
+    assert updated["api"]["resources"]["requests"] == {"cpu": "100m", "memory": "100Mi"}
+    assert updated["api"]["replicaCount"] == 2
+    diff = m.helm_values_diff(Path("values.yaml"), values, updated)
+    assert "-      cpu: '1'" in diff
+    assert "+      cpu: 100m" in diff
+
+
+def test_helm_key_points_at_a_path_the_chart_does_not_spell_obviously(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan()), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    values: dict[str, object] = {"global": {}, "backend": {"api": {}}}
+    updated, written, unmatched = m.helm_values_update(values, proposed, {"api/app": "backend.api.resources"})
+    assert (written, unmatched) == (["backend.api.resources"], [])
+    assert updated["backend"]["api"]["resources"]["requests"]["cpu"] == "100m"
+
+
+def test_helm_reports_a_workload_it_cannot_place(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan(), krr_scan(workload="worker")), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    _updated, written, unmatched = m.helm_values_update({"api": {}}, proposed, {})
+    assert written == ["api.resources"]
+    assert [r["workload"] for r in unmatched] == ["worker"]
+
+
+def test_parse_helm_keys_rejects_a_malformed_mapping() -> None:
+    assert m.parse_helm_keys(["api=api.resources"]) == {"api": "api.resources"}
+    with pytest.raises(ValueError, match="WORKLOAD"):
+        m.parse_helm_keys(["api.resources"])
+
+
+# ----------------------------------------------------------------------- CLI
+
+
+def test_apply_is_refused_with_a_reason() -> None:
+    parser = m.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--apply"])
+
+
+def test_end_to_end_dry_run_prints_the_patches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    krr_json = tmp_path / "krr.json"
+    krr_json.write_text(m.json.dumps(krr_document(krr_scan())), encoding="utf-8")
+    history = tmp_path / "history"
+    for index in range(2):  # two prior runs, so this one is the third
+        record(history, krr_document(krr_scan()), index)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = m.main(["--krr-json", str(krr_json), "--history-dir", str(history)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "## Proposed (1)" in out
+    assert "kind: Deployment" in out
+    assert "cpu: 100m" in out
+    # The run was recorded: that is the state this tool keeps.
+    assert len(list(history.glob("*.json"))) == 3
+    # ... and nothing was written to the working tree without --write.
+    assert not (tmp_path / ".rightsizer" / "patches").exists()
+
+
+def test_no_record_leaves_the_history_alone_but_still_classifies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    krr_json = tmp_path / "krr.json"
+    krr_json.write_text(m.json.dumps(krr_document(krr_scan())), encoding="utf-8")
+    history = tmp_path / "history"
+    for index in range(2):
+        record(history, krr_document(krr_scan()), index)
+
+    m.main(["--krr-json", str(krr_json), "--history-dir", str(history), "--no-record", "--json"])
+
+    payload = m.json.loads(capsys.readouterr().out)
+    assert len(list(history.glob("*.json"))) == 2
+    assert payload["history_file"] is None
+    assert [r["key"] for r in payload["proposed"]] == ["prod/Deployment/api/app"]
+    assert payload["rule"] == {
+        "tolerance_pct": 15.0,
+        "runs": 3,
+        "description": "a recommendation is proposed only once it has stayed within 15% across 3 consecutive runs",
+    }
+
+
+def test_write_puts_one_patch_file_per_workload_on_disk(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    krr_json = tmp_path / "krr.json"
+    krr_json.write_text(m.json.dumps(krr_document(krr_scan(), krr_scan(workload="worker"))), encoding="utf-8")
+    history = tmp_path / "history"
+    for index in range(2):
+        record(history, krr_document(krr_scan(), krr_scan(workload="worker")), index)
+    patches = tmp_path / "patches"
+
+    m.main(
+        ["--krr-json", str(krr_json), "--history-dir", str(history), "--patch-dir", str(patches), "--write"],
+    )
+    capsys.readouterr()
+
+    assert sorted(path.name for path in patches.glob("*.yaml")) == [
+        "prod-deployment-api.yaml",
+        "prod-deployment-worker.yaml",
+    ]
+    patch = yaml.safe_load((patches / "prod-deployment-api.yaml").read_text(encoding="utf-8"))
+    assert patch["metadata"] == {"name": "api", "namespace": "prod"}
+
+
+def test_nothing_stable_opens_no_pull_request(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    krr_json = tmp_path / "krr.json"
+    krr_json.write_text(m.json.dumps(krr_document(krr_scan())), encoding="utf-8")
+
+    exit_code = m.main(
+        ["--krr-json", str(krr_json), "--history-dir", str(tmp_path / "history"), "--pr", "--patch-dir", str(tmp_path)]
+    )
+
+    assert exit_code == 0
+    assert "no pull request opened" in capsys.readouterr().err
+
+
+def test_pr_commits_the_patches_with_the_run_that_justifies_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    krr_json = tmp_path / "krr.json"
+    krr_json.write_text(m.json.dumps(krr_document(krr_scan())), encoding="utf-8")
+    history = tmp_path / "history"
+    for index in range(2):
+        record(history, krr_document(krr_scan()), index)
+    patches = tmp_path / "patches"
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], *, stdin: str | None = None) -> str:
+        calls.append(argv)
+        if argv[:2] == ["gh", "repo"]:
+            return "acme/infra\n"
+        if argv[:3] == ["gh", "pr", "create"]:
+            assert "stayed within 15%" in (stdin or "")
+            return "https://github.com/acme/infra/pull/7\n"
+        return ""
+
+    monkeypatch.setattr(m, "_run", fake_run)
+
+    m.main(
+        [
+            "--krr-json",
+            str(krr_json),
+            "--history-dir",
+            str(history),
+            "--patch-dir",
+            str(patches),
+            "--pr",
+            "--branch",
+            "rightsizer/test",
+        ]
+    )
+
+    assert "https://github.com/acme/infra/pull/7" in capsys.readouterr().out
+    assert ["git", "switch", "-c", "rightsizer/test"] in calls
+    added = next(call for call in calls if call[:2] == ["git", "add"])
+    # The patch and the run that justifies it land in the same commit: the PR
+    # body's "stable for 3 runs" is checkable against the history beside it.
+    assert str(patches / "prod-deployment-api.yaml") in added
+    assert any(name.endswith(".json") and str(history) in name for name in added)
+    assert ["git", "push", "-u", "origin", "rightsizer/test"] in calls
+
+
+# ----------------------------------------------------------------- rendering
+
+
+def test_units_round_up_so_a_rendering_never_proposes_less() -> None:
+    assert fmt_cpu(0.0111) == "12m"
+    assert fmt_memory(100.5 * MIB) == "101Mi"
+    assert parse_cpu("250m") == 0.25
+    assert parse_memory("256Mi") == 256 * MIB
