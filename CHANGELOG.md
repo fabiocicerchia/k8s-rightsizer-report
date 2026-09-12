@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.3.1...v0.3.2) (2026-09-12)
+
+
+### Documentation
+
+* add a Features section to the README ([#84](https://github.com/fabiocicerchia/k8s-rightsizer-report/issues/84)) ([f9038e3](https://github.com/fabiocicerchia/k8s-rightsizer-report/commit/f9038e30cb051698a811cbf0a0696f7ce9530b15))
+
 ## [0.3.1](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.3.0...v0.3.1) (2026-09-11)
 
 
