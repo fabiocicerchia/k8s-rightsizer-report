@@ -21,10 +21,13 @@ krr simple --formatter json
 ## Components
 
 - **Ingest** — reads `krr simple --formatter json` from a file, from stdin, or by
-  running `krr` when it is on PATH (`--krr-arg` passes krr's own flags through).
-  Normalises the `scans` list to one recommendation per workload container,
-  keyed `namespace/kind/workload/container` so the same container is
-  recognisable from one run to the next.
+  running `krr` when it is on PATH (`--krr-arg=-p --krr-arg=URL` passes krr's own
+  flags through; the `=` matters for a value that starts with a dash).
+  Normalises the `scans` list to one recommendation per workload container, keyed
+  `namespace/kind/workload/container` so the same container is recognisable from
+  one run to the next. A document in which KRR scanned nothing is refused rather
+  than recorded: an empty scan is a failed observation, and recording one would
+  break every streak in the history.
 - **History** — each run is written to `.rightsizer/history/<timestamp>.json`.
   That directory is the entire state of the tool, and it is meant to be
   committed: the evidence lives in the same repository as the change it
@@ -35,8 +38,12 @@ krr simple --formatter json
   `--runs`, the recommendation is proposed; below it, it is reported as "not yet"
   with the range it has been moving over.
 - **Emit** — Kustomize strategic-merge patches, one per workload, or an updated
-  Helm values file rendered as a unified diff. `--pr` commits the change and the
-  run file on a branch and opens a pull request with the `gh` CLI.
+  Helm values file rendered as a unified diff. A stable recommendation whose
+  request would land above a limit the patch does not touch is held back by name:
+  Kubernetes rejects that spec, so it would fail at rollout rather than in
+  review. `--pr` commits the change and the run file on a branch and opens a pull
+  request with the `gh` CLI; with nothing to commit it opens nothing and leaves
+  the checkout as it found it.
 
 ## Data flow
 

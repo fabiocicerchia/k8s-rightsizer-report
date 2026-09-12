@@ -23,38 +23,57 @@ permissions:
 jobs:
   open-pr:
     runs-on: ubuntu-latest
+    env:
+      # The scheduled run has no workflow_dispatch inputs, so give it the
+      # namespace it should scan — sizing the wrong namespace scans nothing,
+      # and the tool refuses to record that rather than reset your streaks.
+      NAMESPACE: ${{ inputs.namespace || vars.RIGHTSIZER_NAMESPACE || 'default' }}
+      PROMETHEUS: ${{ vars.PROMETHEUS_URL }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - run: pip install k8s-rightsizer-report krr
+      - run: pip install k8s-rightsizer-report
+      # KRR is not on PyPI. Installing from source is the portable option here;
+      # the brew tap and the release binaries work just as well if this repo
+      # already has a way of shipping tools to its runners. See
+      # https://github.com/robusta-dev/krr for the current options.
+      - run: pip install git+https://github.com/robusta-dev/krr
+      - name: Name the branch once
+        # Computed once and shared: a job that crosses midnight UTC would
+        # otherwise look for a branch under yesterday's date.
+        run: echo "BRANCH=rightsizer/$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_ENV"
       - name: Propose what has settled, and open the PR
-        env:
-          # Passed through an env var, not interpolated into the script — a
-          # malicious workflow_dispatch namespace value (this job holds
-          # contents:write/pull-requests:write) can't inject shell commands.
-          NAMESPACE: ${{ inputs.namespace || 'default' }}
-          PROMETHEUS: ${{ vars.PROMETHEUS_URL }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Records this run in .rightsizer/history/, commits it with the
-          # patches, and opens the PR. Nothing to open is a no-op, not a
-          # failure: on most weeks nothing new has settled.
+          # Note `--krr-arg=-p`: argparse needs the `=` for a value that starts
+          # with a dash, or it reads -p as a flag of this tool's own.
+          #
+          # This records the run in .rightsizer/history/, commits it with the
+          # patches on a branch, and opens the PR. Nothing to open is a no-op,
+          # not a failure: most weeks nothing new has settled.
           k8s-rightsizer-report -n "$NAMESPACE" \
-            --krr-arg -p --krr-arg "$PROMETHEUS" \
-            --pr
-      - name: Keep the history even when there was no PR to open
+            --krr-arg=-p --krr-arg="$PROMETHEUS" \
+            --pr --branch "$BRANCH"
+      - name: Keep the run on the default branch, PR or no PR
         run: |
           set -e
-          # A run that proposes nothing still belongs in the history — it is one
-          # of the runs a later recommendation will claim to have been stable
-          # across.
-          if ! git diff --quiet -- .rightsizer/history; then
-            git add .rightsizer/history
+          # A run that proposed nothing is still one of the runs a later
+          # recommendation will claim to have been stable across — and a run
+          # that went out on a PR branch is lost if that PR is never merged. So
+          # the history lands on the default branch either way.
+          git switch "$DEFAULT_BRANCH"
+          # When a PR was opened, the run file is committed over there.
+          git checkout "$BRANCH" -- .rightsizer/history 2>/dev/null || true
+          # `git add` first: a brand-new run file is untracked, and `git diff`
+          # does not see untracked files at all.
+          git add .rightsizer/history
+          if ! git diff --cached --quiet; then
             git commit -m "chore(rightsizing): record run"
-            git push origin HEAD:"${{ github.event.repository.default_branch }}"
+            git push origin "$DEFAULT_BRANCH"
           fi

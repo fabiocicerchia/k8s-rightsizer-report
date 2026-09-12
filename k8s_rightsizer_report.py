@@ -26,6 +26,7 @@ import math
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -80,6 +81,13 @@ DEFAULT_API_VERSION = "apps/v1"
 COST_KEYS = ("monthly_cost", "cost_monthly", "cost")
 
 UNSET = "–"  # en dash: "KRR proposes nothing here", as distinct from zero
+
+
+class RightsizerError(Exception):
+    """Something this tool refuses to do, with a reason a person can act on.
+
+    Raised rather than printed so every path out of the tool is the same one;
+    main() turns it into a message on stderr and a non-zero exit."""
 
 
 # ------------------------------------------------------ reading foreign JSON
@@ -181,7 +189,10 @@ def parse_krr_output(text: str) -> Manifest:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         parsed = None
-    if isinstance(parsed, dict):
+    # "scans" is what makes it a KRR document: any other JSON object would be
+    # read as a scan of nothing, which is exactly the run that must not be
+    # recorded (see observed()).
+    if isinstance(parsed, dict) and "scans" in parsed:
         return mapping(parsed)
     decoder = json.JSONDecoder()
     for start in _brace_positions(text):
@@ -191,7 +202,7 @@ def parse_krr_output(text: str) -> Manifest:
             continue
         if isinstance(document, dict) and "scans" in document:
             return mapping(document)
-    raise ValueError("no krr JSON document found in the output — is this `krr simple --formatter json`?")
+    raise RightsizerError("no krr JSON document found in the output — is this `krr simple --formatter json`?")
 
 
 def load_krr(source: str) -> Manifest:
@@ -204,7 +215,7 @@ def run_krr(namespace: str | None = None, extra_args: Sequence[str] = ()) -> Man
     """Run krr for the user when it is on PATH."""
     krr_path = shutil.which("krr")
     if krr_path is None:
-        raise RuntimeError("krr is not on PATH — install robusta-dev/krr, or pass --krr-json FILE")
+        raise RightsizerError("krr is not on PATH — install robusta-dev/krr, or pass --krr-json FILE")
     argv = [krr_path, *KRR_BASE_ARGS]
     if namespace:
         argv += ["-n", namespace]
@@ -274,6 +285,30 @@ def krr_cost(scan: Manifest) -> Manifest | None:
     if current is None and proposed is None:
         return None
     return {"current": current, "proposed": proposed}
+
+
+def observed(document: Manifest) -> Manifest:
+    """The document, if it actually observed something.
+
+    An empty scan list is a *failed* observation — Prometheus was down, the
+    namespace was wrong, the label selector matched nothing — not an observation
+    that nothing exists. Recording one would break every streak in the history
+    and cost three more runs to recover, so refuse it instead: a run that is not
+    evidence does not belong in a directory kept as evidence."""
+    if not document.get("scans"):
+        raise RightsizerError(
+            "krr scanned nothing — refusing to record a run that would reset every "
+            "stability streak. Check the namespace, and that krr can reach Prometheus."
+        )
+    return document
+
+
+def krr_errors(document: Manifest) -> list[str]:
+    """What krr itself could not scan. Those workloads are missing from this run
+    like any other absence, so their streaks break — say so rather than let a
+    streak reset unexplained."""
+    reported: list[Any] = document.get("errors") or []
+    return [str(error) for error in reported]
 
 
 def recommendation_key(namespace: str, kind: str, workload: str, container: str) -> str:
@@ -357,9 +392,9 @@ def load_history(history_dir: Path) -> list[Run]:
         try:
             run = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise ValueError(f"{path} is not readable as a recorded run: {exc}") from exc
+            raise RightsizerError(f"{path} is not readable as a recorded run: {exc}") from exc
         if not isinstance(run, dict) or "recommendations" not in run:
-            raise ValueError(f"{path} is not a k8s-rightsizer-report run (no `recommendations`)")
+            raise RightsizerError(f"{path} is not a k8s-rightsizer-report run (no `recommendations`)")
         runs.append(mapping(run))
     return runs
 
@@ -483,6 +518,33 @@ def range_text(stab: Manifest) -> str:
     return ", ".join(parts) or UNSET
 
 
+def limit_conflicts(recommendation: Recommendation) -> list[str]:
+    """Resources whose proposed request would land above the limit in force once
+    the patch merges.
+
+    Kubernetes rejects a container whose request exceeds its limit, and KRR
+    recommends no CPU limit by design — so raising a request under an existing
+    lower limit yields a manifest the API server refuses at rollout. The patch
+    will not invent a limit to fit, so the recommendation waits for a person to
+    raise or remove that limit. Caught here, it costs a line in a table; caught
+    at rollout, it costs a revert."""
+    conflicts: list[str] = []
+    proposed, current = section(recommendation, "proposed"), section(recommendation, "current")
+    for resource in RESOURCES:
+        request = _number(section(proposed, "requests").get(resource))
+        # What the container ends up with: the proposed limit, or the one
+        # already set that this patch does not touch.
+        limit = _number(section(proposed, "limits").get(resource))
+        if limit is None:
+            limit = _number(section(current, "limits").get(resource))
+        if request is not None and limit is not None and request > limit:
+            conflicts.append(
+                f"{resource} request {fmt_resource(resource, request)} exceeds its "
+                f"{fmt_resource(resource, limit)} limit"
+            )
+    return conflicts
+
+
 def classify(runs: Sequence[Run], rule: Rule) -> tuple[list[Recommendation], list[Recommendation]]:
     """(proposed, held back) from the newest run, each with its stability."""
     if not runs:
@@ -493,9 +555,14 @@ def classify(runs: Sequence[Run], rule: Rule) -> tuple[list[Recommendation], lis
     for key in sorted(latest):
         recommendation = dict(latest[key])
         stab = stability(runs, key, rule)
+        conflicts = limit_conflicts(recommendation)
+        # A number that is still moving may not conflict with anything next week,
+        # so say that first; the limit is the story only once the number is settled.
+        blocked = stab["stable"] and bool(conflicts)
         recommendation["stability"] = stab
-        recommendation["status"] = status_text(stab, rule)
-        (proposed if stab["stable"] else held).append(recommendation)
+        recommendation["conflicts"] = conflicts
+        recommendation["status"] = "not yet — " + "; ".join(conflicts) if blocked else status_text(stab, rule)
+        (proposed if stab["stable"] and not conflicts else held).append(recommendation)
     return proposed, held
 
 
@@ -602,29 +669,27 @@ def parse_helm_keys(entries: Sequence[str]) -> dict[str, str]:
     for entry in entries:
         name, separator, path = entry.partition("=")
         if not separator or not name.strip() or not path.strip():
-            raise ValueError(f"--helm-key wants WORKLOAD[/CONTAINER]=DOTTED.PATH, got {entry!r}")
+            raise RightsizerError(f"--helm-key wants WORKLOAD[/CONTAINER]=DOTTED.PATH, got {entry!r}")
         mapping[name.strip()] = path.strip()
     return mapping
 
 
-def values_path(
-    values: Manifest, recommendation: Recommendation, overrides: Mapping[str, str], single: bool
-) -> list[str] | None:
+def values_path(values: Manifest, recommendation: Recommendation, overrides: Mapping[str, str]) -> list[str] | None:
     """Where in the values file this container's `resources` live.
 
-    Charts do not agree on this, so guess only where the guess is obvious — a
-    subtree named after the workload or the container, or the top-level
-    `resources` of a single-workload chart — and let --helm-key say the rest."""
+    Charts do not agree on this, so guess only from the values file itself — a
+    subtree named after the workload, or after the container — and let
+    --helm-key say the rest. Nothing here may depend on which recommendations
+    happened to be stable this run: a guess that changes week to week would
+    write one workload's sizing into another's block."""
     workload, container = recommendation["workload"], recommendation["container"]
     for candidate in (overrides.get(f"{workload}/{container}"), overrides.get(workload)):
         if candidate:
             return candidate.split(".")
-    if isinstance(values.get(workload), dict):
-        return [workload, "resources"]
     if isinstance(values.get(container), dict):
         return [container, "resources"]
-    if single and "resources" in values:
-        return ["resources"]
+    if isinstance(values.get(workload), dict):
+        return [workload, "resources"]
     return None
 
 
@@ -641,21 +706,29 @@ def _set_path(tree: Manifest, path: Sequence[str], value: Any) -> None:
 
 def helm_values_update(
     values: Manifest, recommendations: Sequence[Recommendation], overrides: Mapping[str, str]
-) -> tuple[Manifest, list[str], list[Recommendation]]:
-    """(updated values, paths written, recommendations with nowhere to go)."""
+) -> tuple[Manifest, list[str], list[tuple[Recommendation, str]]]:
+    """(updated values, paths written, [(recommendation, why it was skipped)])."""
     updated = copy.deepcopy(values)
-    written: list[str] = []
-    unmatched: list[Recommendation] = []
-    single = len(recommendations) == 1
+    planned: list[tuple[Recommendation, list[str]]] = []
+    skipped: list[tuple[Recommendation, str]] = []
     for recommendation in recommendations:
-        block = resources_block(recommendation["proposed"])
-        path = values_path(values, recommendation, overrides, single) if block else None
+        path = values_path(values, recommendation, overrides) if resources_block(recommendation["proposed"]) else None
         if path is None:
-            unmatched.append(recommendation)
+            skipped.append((recommendation, "no place found for it"))
+        else:
+            planned.append((recommendation, path))
+    # Sidecars: every container of one workload guesses the same path, and
+    # writing them in turn would keep whichever went last and call it a success.
+    wanted = Counter(".".join(path) for _, path in planned)
+    written: list[str] = []
+    for recommendation, path in planned:
+        dotted = ".".join(path)
+        if wanted[dotted] > 1:
+            skipped.append((recommendation, f"{wanted[dotted]} containers resolve to {dotted}"))
             continue
-        _set_path(updated, path, block)
-        written.append(".".join(path))
-    return updated, written, unmatched
+        _set_path(updated, path, resources_block(recommendation["proposed"]))
+        written.append(dotted)
+    return updated, written, skipped
 
 
 def helm_values_diff(path: Path, original: Manifest, updated: Manifest) -> str:
@@ -801,7 +874,7 @@ def _run(argv: list[str], *, stdin: str | None = None) -> str:
     stderr surfaced) is decided in one place."""
     executable = shutil.which(argv[0])
     if executable is None:
-        raise RuntimeError(f"{argv[0]} is not on PATH")
+        raise RightsizerError(f"{argv[0]} is not on PATH")
     completed = subprocess.run(  # noqa: S603 — argv is built here, never a string
         [executable, *argv[1:]],
         check=True,
@@ -813,12 +886,22 @@ def _run(argv: list[str], *, stdin: str | None = None) -> str:
     return completed.stdout
 
 
+def _succeeds(argv: list[str]) -> bool:
+    """Whether the command exits zero — for the commands whose exit status is
+    the answer (`git diff --quiet`), not a failure."""
+    try:
+        _run(argv)
+    except (RightsizerError, subprocess.SubprocessError, OSError):
+        return False
+    return True
+
+
 def repo_slug() -> str | None:
     """`owner/repo`, for linking the history file. Best effort: without it the
     body still names the path, it just is not a link."""
     try:
         return _run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]).strip() or None
-    except (RuntimeError, subprocess.SubprocessError):
+    except (RightsizerError, subprocess.SubprocessError, OSError):
         return None
 
 
@@ -826,10 +909,18 @@ def default_branch_name(now: datetime) -> str:
     return f"rightsizer/{now.strftime('%Y%m%d-%H%M%S')}"
 
 
-def open_pull_request(paths: Sequence[Path], branch: str, title: str, body: str) -> str:
-    """Commit the change on its own branch and open the pull request with gh."""
+def open_pull_request(paths: Sequence[Path], branch: str, title: str, body: str) -> str | None:
+    """Commit the change on its own branch and open the pull request with gh.
+
+    None when there is nothing to commit — the patches already say what the
+    repository says, which is the ordinary state of a re-run. That leaves the
+    checkout as it was found rather than parked on an empty branch."""
     _run(["git", "switch", "-c", branch])
     _run(["git", "add", "--", *[str(path) for path in paths]])
+    if _succeeds(["git", "diff", "--cached", "--quiet"]):  # nothing staged
+        _run(["git", "switch", "-"])
+        _run(["git", "branch", "-D", branch])
+        return None
     _run(["git", "commit", "-m", title])
     _run(["git", "push", "-u", "origin", branch])
     return _run(["gh", "pr", "create", "--title", title, "--body-file", "-"], stdin=body).strip()
@@ -909,10 +1000,11 @@ def _emit_helm(args: argparse.Namespace, proposed: Sequence[Recommendation]) -> 
     """(diff to print, files changed, warnings)."""
     path = Path(args.helm_values)
     original = mapping(yaml.safe_load(path.read_text(encoding="utf-8")))
-    updated, written, unmatched = helm_values_update(original, proposed, parse_helm_keys(args.helm_key))
+    updated, written, skipped = helm_values_update(original, proposed, parse_helm_keys(args.helm_key))
     warnings = [
-        f"no place found in {path} for {recommendation['key']} — point at it with --helm-key"
-        for recommendation in unmatched
+        f"{recommendation['key']} not written to {path} ({why}) — say where with "
+        f"--helm-key={recommendation['workload']}/{recommendation['container']}=some.dotted.path"
+        for recommendation, why in skipped
     ]
     if not written:
         return "", [], warnings
@@ -945,11 +1037,10 @@ def _json_payload(
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def run_once(args: argparse.Namespace) -> int:
     rule = Rule(tolerance_pct=args.tolerance, runs=args.runs)
     document, source = ingest(args)
-    recommendations = normalise(document, args.namespace)
+    recommendations = normalise(observed(document), args.namespace)
 
     now = datetime.now(tz=timezone.utc)
     history_dir = Path(args.history_dir)
@@ -961,9 +1052,14 @@ def main(argv: list[str] | None = None) -> int:
     proposed, held = classify(runs, rule)
     branch = args.branch or default_branch_name(now)
 
-    warnings: list[str] = []
+    # A workload krr could not scan is absent from this run like any other
+    # absence, and its streak breaks; that should never look unexplained.
+    warnings: list[str] = [
+        f"krr reported an error, so this run may be partial: {error}" for error in krr_errors(document)
+    ]
     if args.helm_values:
-        change, changed, warnings = _emit_helm(args, proposed)
+        change, changed, helm_warnings = _emit_helm(args, proposed)
+        warnings += helm_warnings
     else:
         change, changed = _emit_kustomize(args, proposed)
 
@@ -989,10 +1085,24 @@ def main(argv: list[str] | None = None) -> int:
         body = render_pr_body(proposed, held, rule, Target(branch, repo_slug(), recorded))
         title = f"chore(rightsizing): {len(proposed)} stable recommendation(s) from KRR"
         url = open_pull_request(paths, branch, title, body)
+        if url is None:
+            print("the patches already match the repository — no pull request opened", file=sys.stderr)  # noqa: T201
+            return 0
         # With --json, stdout is the payload and nothing else; the URL goes
         # where a person reads it rather than where a parser does.
         print(url, file=sys.stderr if args.json else sys.stdout)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return run_once(args)
+    except RightsizerError as exc:
+        # What this tool refuses to do is a message, not a traceback: the reason
+        # is the useful part and a stack trace buries it.
+        print(f"error: {exc}", file=sys.stderr)  # noqa: T201 — the tool's output
+        return 1
 
 
 if __name__ == "__main__":

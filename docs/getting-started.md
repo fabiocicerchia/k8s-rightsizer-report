@@ -4,7 +4,8 @@
 
 - Python 3.10+
 - [KRR](https://github.com/robusta-dev/krr) — on PATH to have it run for you, or
-  just its JSON output (`krr simple --formatter json`) to pass in
+  just its JSON output (`krr simple --formatter json`) to pass in. KRR is not on
+  PyPI: install it from source, the brew tap, or a release binary
 - KRR itself needs a Prometheus that holds your cluster's usage history
 - The [`gh` CLI](https://cli.github.com), authenticated, for `--pr`
 
@@ -29,8 +30,9 @@ k8s-rightsizer-report -n production
 # Ingest a krr run you already have ('-' reads stdin):
 k8s-rightsizer-report --krr-json krr.json
 
-# Pass krr's own flags through:
-k8s-rightsizer-report -n production --krr-arg -p --krr-arg http://prometheus:9090
+# Pass krr's own flags through. Note the `=`: a bare `--krr-arg -p` looks like a
+# missing value to argparse, because -p starts with a dash.
+k8s-rightsizer-report -n production --krr-arg=-p --krr-arg=http://prometheus:9090
 
 # JSON output, for a dashboard or another step in a pipeline:
 k8s-rightsizer-report -n production --json
@@ -91,14 +93,44 @@ k8s-rightsizer-report -n production --helm-values charts/app/values.yaml
 ```
 
 The values file is updated in place of patches, and the change is printed as a
-unified diff. Where a chart does not spell the path obviously, point at it:
+unified diff. The path is guessed only from the values file itself — a subtree
+named after the container, or after the workload. Where a chart does not spell it
+that way, or where several containers of one workload would land on the same
+subtree, point at it:
 
 ```sh
 --helm-key api/app=backend.api.resources
 ```
 
+Anything it will not place is named in a warning, with the flag that fixes it.
+
 With `--write` or `--pr`, the values file is rewritten through PyYAML, which
 normalises comments and formatting away — review the diff before merging.
+
+## When a run is refused
+
+If KRR scanned nothing, the run is refused rather than recorded:
+
+```console
+error: krr scanned nothing — refusing to record a run that would reset every
+stability streak. Check the namespace, and that krr can reach Prometheus.
+```
+
+An empty scan is a failed observation, not an observation that nothing exists.
+Recording it would break every streak in the history and cost three more runs to
+get back what you had. Fix the namespace or the Prometheus connection and run it
+again.
+
+A recommendation can also be held back for a reason that is not about stability:
+
+```text
+| Deployment/api | app | not yet — cpu request 120m exceeds its 100m limit | … |
+```
+
+KRR recommends no CPU limit by design, and Kubernetes rejects a container whose
+request is above its limit — so this change would fail at rollout, not in review.
+The patch will not invent a limit to fit; raise or remove the existing one and
+the recommendation comes through on the next run.
 
 ## What this will not do
 

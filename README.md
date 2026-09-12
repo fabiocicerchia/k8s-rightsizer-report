@@ -52,6 +52,17 @@ Anything still moving is reported as **not yet — flapping**, with the range it
 has been moving over, so you can see why it was held back rather than take it on
 trust. Both knobs are yours: `--tolerance` and `--runs`.
 
+The rule is not the only thing that can hold a change back:
+
+- A run in which KRR scanned nothing is **refused, not recorded**. An empty scan
+  is a failed observation — Prometheus down, the wrong namespace — and recording
+  it would break every streak in the history and cost three more runs to
+  recover.
+- A proposed request that would land above a limit the patch does not touch is
+  held back by name. KRR recommends no CPU limit by design, and Kubernetes
+  rejects a container whose request exceeds its limit, so this one would fail at
+  rollout rather than in review. Raise or remove the limit and it comes through.
+
 Prefer VPA to Prometheus history? [Goldilocks](https://github.com/FairwindsOps/goldilocks)
 is the other option — it surfaces VPA recommendations in a dashboard.
 
@@ -65,8 +76,9 @@ k8s-rightsizer-report -n payments
 krr simple --formatter json > krr.json
 k8s-rightsizer-report --krr-json krr.json
 
-# Pass krr's own flags straight through:
-k8s-rightsizer-report -n payments --krr-arg -p --krr-arg http://prometheus:9090
+# Pass krr's own flags straight through (note the `=`: argparse reads a bare
+# `--krr-arg -p` as a missing value):
+k8s-rightsizer-report -n payments --krr-arg=-p --krr-arg=http://prometheus:9090
 
 # Open the pull request (needs the gh CLI, authenticated):
 k8s-rightsizer-report -n payments --pr
@@ -125,13 +137,18 @@ unset — the patch proposes what KRR proposed, and nothing else.
 k8s-rightsizer-report -n payments --helm-values charts/payments/values.yaml
 ```
 
-It writes `<workload>.resources` when the chart has a subtree named after the
-workload (or the container), or the top-level `resources` of a single-workload
-chart. For anything else, say where:
+It writes `<container>.resources` or `<workload>.resources` when the chart has a
+subtree by that name — a guess made from the values file alone, never from which
+recommendations happened to be stable this week. For anything else, including
+every container of a multi-container workload (they all point at the same
+subtree), say where:
 
 ```sh
 --helm-key api/app=backend.api.resources
 ```
+
+Anything it will not place is named in a warning with the flag to fix it, rather
+than written somewhere plausible.
 
 Note that `--write`/`--pr` rewrite the values file through PyYAML, which
 normalises comments and formatting away. Review the diff.
@@ -149,7 +166,8 @@ pip install git+https://github.com/fabiocicerchia/k8s-rightsizer-report
 ```
 
 You also need [KRR](https://github.com/robusta-dev/krr) — on PATH to have it run
-for you, or just its JSON output to pass to `--krr-json`.
+for you, or just its JSON output to pass to `--krr-json`. KRR is not on PyPI;
+install it from source, from the brew tap, or from a release binary.
 
 ## Development
 

@@ -19,6 +19,13 @@ consecutive runs. Anything still moving is reported as
 .RB \(lq "not yet \(em flapping" \(rq
 together with the range it has been moving over.
 .PP
+Two things are held back for reasons that are not about stability. A run in which
+KRR scanned nothing is refused rather than recorded: an empty scan is a failed
+observation, and recording it would break every streak in the history. And a
+proposed request that would land above a limit this patch does not touch is held
+back by name \(em Kubernetes rejects such a container, so the change would fail
+at rollout rather than in review.
+.PP
 There is no
 .BR \-\-apply .
 The cluster changes when the pull request merges and the GitOps tooling rolls it
@@ -40,7 +47,10 @@ or from standard input when it is
 Without this, krr is run for you when it is on PATH.
 .TP
 .BI \-\-krr\-arg " ARG"
-Extra argument passed through to krr. Repeatable.
+Extra argument passed through to krr. Repeatable. Use the
+.BI \-\-krr\-arg= ARG
+spelling for a value that starts with a dash, e.g.
+.BR \-\-krr\-arg=\-p .
 .TP
 .BI \-\-history\-dir " DIR"
 Where runs are recorded (default:
@@ -72,7 +82,10 @@ change as a unified diff.
 .TP
 .BI \-\-helm\-key " W[/C]=PATH"
 Where a workload's (or container's) resources live in the values file, as a
-dotted path. Repeatable.
+dotted path. Repeatable. Without it, the path is guessed only from the values
+file itself \(em a subtree named after the container, or after the workload \(em
+and anything that cannot be placed unambiguously is reported rather than
+written somewhere plausible.
 .TP
 .B \-\-write
 Write the patches or the values update to disk.
@@ -96,8 +109,9 @@ Machine\-readable output.
 .B 0
 A report was produced.
 .TP
-.B non-zero
-KRR could not be run or read, or the history could not be read.
+.B 1
+KRR could not be run or read, krr scanned nothing, or the history could not be
+read. The reason is printed on standard error.
 .SH EXAMPLES
 .PP
 Run krr, record the run, see what has settled:

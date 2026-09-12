@@ -18,6 +18,19 @@ environment-specific to template.
 ## Note on the history directory
 
 Most weeks the workflow opens no PR, because nothing new has settled. It still
-commits the run: a run that proposes nothing is one of the runs a later
-recommendation will claim to have been stable across. Losing it would reset
-every streak.
+commits the run to the default branch — and it does so even when a PR *was*
+opened, because a run that only exists on a PR branch is lost if that PR is never
+merged. A run that proposed nothing is one of the runs a later recommendation
+will claim to have been stable across; losing it would reset every streak.
+
+Two details in the workflow are load-bearing:
+
+- `git add` before `git diff --cached --quiet`. A brand-new run file is
+  untracked, and `git diff` does not see untracked files at all — checking with a
+  plain `git diff` would silently never commit anything.
+- `--krr-arg=-p`, not `--krr-arg -p`. A value starting with a dash needs the `=`
+  or argparse reads it as a missing argument and exits 2, failing the job.
+
+If krr scans nothing — a Prometheus outage, the wrong namespace — the tool exits
+non-zero and records nothing, so the step fails loudly rather than quietly
+resetting every streak in the history.

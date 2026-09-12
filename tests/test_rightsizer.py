@@ -4,6 +4,7 @@ The stability rule is the whole product, so most of what is asserted here is
 "which recommendations does a sequence of runs let through, and why".
 """
 
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,6 +40,7 @@ def krr_scan(
     memory: float = 100 * MIB,
     current_cpu: float = 1.0,
     current_memory: float = 1024 * MIB,
+    current_cpu_limit: float | None = None,
     cost: dict[str, float] | None = None,
 ) -> dict[str, object]:
     """One entry of `krr simple --formatter json`'s `scans` list."""
@@ -51,7 +53,7 @@ def krr_scan(
             "kind": kind,
             "allocations": {
                 "requests": {"cpu": current_cpu, "memory": current_memory},
-                "limits": {"cpu": None, "memory": current_memory * 2},
+                "limits": {"cpu": current_cpu_limit, "memory": current_memory * 2},
                 "info": {},
             },
         },
@@ -116,8 +118,29 @@ def test_parse_krr_output_skips_a_banner_before_the_json() -> None:
 
 
 def test_parse_krr_output_rejects_output_with_no_document() -> None:
-    with pytest.raises(ValueError, match="no krr JSON document"):
+    with pytest.raises(m.RightsizerError, match="no krr JSON document"):
         m.parse_krr_output("krr: connection refused")
+
+
+def test_parse_krr_output_rejects_json_that_is_not_a_krr_run() -> None:
+    """Some other JSON object would read as a scan of nothing, which is exactly
+    the run that must never be recorded."""
+    with pytest.raises(m.RightsizerError, match="no krr JSON document"):
+        m.parse_krr_output('{"error": "context deadline exceeded"}')
+
+
+def test_a_scan_of_nothing_is_refused_rather_than_recorded(tmp_path: Path) -> None:
+    """Prometheus down, wrong namespace, a selector that matched nothing: an
+    empty scan is a failed observation, and recording it would break every
+    streak in the history."""
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan()), index)
+    with pytest.raises(m.RightsizerError, match="scanned nothing"):
+        m.observed(krr_document())
+    assert len(list(tmp_path.glob("*.json"))) == 3
+    # The three good runs still stand, because the empty one never landed.
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    assert [r["key"] for r in proposed] == ["prod/Deployment/api/app"]
 
 
 # ------------------------------------------------------------------- history
@@ -151,7 +174,7 @@ def test_two_runs_in_the_same_second_do_not_overwrite_each_other(tmp_path: Path)
 def test_load_history_refuses_a_corrupt_run(tmp_path: Path) -> None:
     record(tmp_path, krr_document(krr_scan()))
     (tmp_path / "2026-09-02T06-00-00Z.json").write_text("{ this is not json", encoding="utf-8")
-    with pytest.raises(ValueError, match="not readable as a recorded run"):
+    with pytest.raises(m.RightsizerError, match="not readable as a recorded run"):
         load_history(tmp_path)
 
 
@@ -244,6 +267,48 @@ def test_stability_of_an_unknown_key_is_zero() -> None:
         "stable": False,
         "ranges": {},
     }
+
+
+def test_a_request_above_an_existing_limit_is_held_back(tmp_path: Path) -> None:
+    """KRR recommends no CPU limit by design, so a raised request under an
+    existing lower limit would merge into a spec the API server rejects."""
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan(cpu=0.12, current_cpu_limit=0.1)), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert proposed == []
+    assert held[0]["status"] == "not yet — cpu request 120m exceeds its 100m limit"
+    # The recommendation is settled; it is the limit that blocks it.
+    assert held[0]["stability"]["stable"] is True
+    assert m.kustomize_patches(proposed) == []
+
+
+def test_a_request_under_the_existing_limit_is_proposed(tmp_path: Path) -> None:
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan(cpu=0.08, current_cpu_limit=0.1)), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert (held, [r["conflicts"] for r in proposed]) == ([], [[]])
+
+
+def test_a_flapping_number_reads_as_flapping_even_when_it_also_conflicts(tmp_path: Path) -> None:
+    """Next week's number may not conflict at all, so the unsettled number is the
+    story until it settles."""
+    for index, cpu in enumerate([0.12, 0.40, 0.12]):
+        record(tmp_path, krr_document(krr_scan(cpu=cpu, current_cpu_limit=0.1)), index)
+    _proposed, held = classify(load_history(tmp_path), Rule())
+    assert held[0]["status"] == "not yet — flapping"
+    assert held[0]["conflicts"] == ["cpu request 120m exceeds its 100m limit"]
+
+
+def test_a_limit_krr_proposes_itself_settles_the_conflict(tmp_path: Path) -> None:
+    """The check reads the limit that will be in force after the merge, not the
+    one that happens to be set now."""
+    scan = krr_scan(cpu=0.12, memory=100 * MIB, current_cpu_limit=0.1)
+    scan["recommended"]["limits"]["cpu"] = {"value": 0.2, "severity": "OK"}  # type: ignore[index]
+    for index in range(3):
+        record(tmp_path, krr_document(scan), index)
+    proposed, held = classify(load_history(tmp_path), Rule())
+    assert held == []
+    assert proposed[0]["proposed"]["limits"]["cpu"] == 0.2
 
 
 # -------------------------------------------------------------------- output
@@ -385,14 +450,50 @@ def test_helm_reports_a_workload_it_cannot_place(tmp_path: Path) -> None:
     for index in range(3):
         record(tmp_path, krr_document(krr_scan(), krr_scan(workload="worker")), index)
     proposed, _held = classify(load_history(tmp_path), Rule())
-    _updated, written, unmatched = m.helm_values_update({"api": {}}, proposed, {})
+    _updated, written, skipped = m.helm_values_update({"api": {}}, proposed, {})
     assert written == ["api.resources"]
-    assert [r["workload"] for r in unmatched] == ["worker"]
+    assert [(r["workload"], why) for r, why in skipped] == [("worker", "no place found for it")]
+
+
+def test_helm_never_guesses_the_top_level_resources_of_a_chart(tmp_path: Path) -> None:
+    """Guessing from how many recommendations happened to be stable this run
+    would write one workload's sizing into another's block, and would write
+    somewhere different next week. --helm-key says it instead."""
+    for index in range(3):
+        record(tmp_path, krr_document(krr_scan()), index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    values: dict[str, object] = {"resources": {"requests": {"cpu": "2"}}, "worker": {}}
+    updated, written, skipped = m.helm_values_update(values, proposed, {})
+    assert (written, [why for _r, why in skipped]) == ([], ["no place found for it"])
+    assert updated == values
+    # ... and with the path spelled out, it lands exactly there.
+    updated, written, skipped = m.helm_values_update(values, proposed, {"api/app": "resources"})
+    assert (written, skipped) == (["resources"], [])
+    assert updated["resources"]["requests"]["cpu"] == "100m"
+
+
+def test_helm_skips_sidecars_that_resolve_to_one_workloads_path(tmp_path: Path) -> None:
+    """Both containers guess `api.resources`; writing them in turn would keep
+    whichever went last and report both as written."""
+    document = krr_document(krr_scan(container="app", cpu=0.5), krr_scan(container="sidecar", cpu=0.05))
+    for index in range(3):
+        record(tmp_path, document, index)
+    proposed, _held = classify(load_history(tmp_path), Rule())
+    values: dict[str, object] = {"api": {"resources": {}}}
+    updated, written, skipped = m.helm_values_update(values, proposed, {})
+    assert written == []
+    assert [why for _r, why in skipped] == ["2 containers resolve to api.resources"] * 2
+    assert updated == values
+    # Naming each container's path resolves it.
+    _updated, written, skipped = m.helm_values_update(
+        values, proposed, {"api/app": "api.resources", "api/sidecar": "api.sidecar.resources"}
+    )
+    assert (sorted(written), skipped) == (["api.resources", "api.sidecar.resources"], [])
 
 
 def test_parse_helm_keys_rejects_a_malformed_mapping() -> None:
     assert m.parse_helm_keys(["api=api.resources"]) == {"api": "api.resources"}
-    with pytest.raises(ValueError, match="WORKLOAD"):
+    with pytest.raises(m.RightsizerError, match="WORKLOAD"):
         m.parse_helm_keys(["api.resources"])
 
 
@@ -501,6 +602,8 @@ def test_pr_commits_the_patches_with_the_run_that_justifies_them(
         if argv[:3] == ["gh", "pr", "create"]:
             assert "stayed within 15%" in (stdin or "")
             return "https://github.com/acme/infra/pull/7\n"
+        if argv[:2] == ["git", "diff"]:  # `--quiet` exits non-zero when staged
+            raise subprocess.CalledProcessError(1, argv)
         return ""
 
     monkeypatch.setattr(m, "_run", fake_run)
@@ -527,6 +630,46 @@ def test_pr_commits_the_patches_with_the_run_that_justifies_them(
     assert str(patches / "prod-deployment-api.yaml") in added
     assert any(name.endswith(".json") and str(history) in name for name in added)
     assert ["git", "push", "-u", "origin", "rightsizer/test"] in calls
+
+
+def test_pr_is_not_opened_when_the_patches_already_match_the_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ordinary state of a re-run. Committing nothing would fail mid-way and
+    leave the checkout parked on an empty branch."""
+    krr_json = tmp_path / "krr.json"
+    krr_json.write_text(m.json.dumps(krr_document(krr_scan())), encoding="utf-8")
+    history = tmp_path / "history"
+    for index in range(2):
+        record(history, krr_document(krr_scan()), index)
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], *, stdin: str | None = None) -> str:
+        calls.append(argv)
+        return ""  # including `git diff --cached --quiet`: nothing is staged
+
+    monkeypatch.setattr(m, "_run", fake_run)
+
+    exit_code = m.main(
+        [
+            "--krr-json",
+            str(krr_json),
+            "--history-dir",
+            str(history),
+            "--patch-dir",
+            str(tmp_path / "patches"),
+            "--pr",
+            "--branch",
+            "rightsizer/test",
+        ]
+    )
+
+    assert exit_code == 0
+    assert "already match the repository" in capsys.readouterr().err
+    assert not any(call[:2] == ["git", "commit"] for call in calls)
+    # The checkout is left as it was found, not on an empty branch.
+    assert ["git", "switch", "-"] in calls
+    assert ["git", "branch", "-D", "rightsizer/test"] in calls
 
 
 # ----------------------------------------------------------------- rendering
