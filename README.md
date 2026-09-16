@@ -128,6 +128,27 @@ spec:
               memory: 180Mi
 ```
 
+## Features
+
+- Turns metrics-server usage into **PR-ready requests and limits** — either a
+  readable report or patch YAML you can commit.
+- Closes the loop VPA recommendations leave open: getting the numbers into the
+  repo rather than into a dashboard.
+- Sizes Deployments, StatefulSets and DaemonSets, per container.
+- Three sources for the peak figure: `kubectl top` by default, a PromQL p95
+  with `--prometheus`, or VerticalPodAutoscaler targets with `--vpa`.
+- **Deliberately simple, explainable model** — peak × headroom (1.4× CPU,
+  1.25× memory), rounded to sane steps (25m / 32Mi), limits at 2× CPU and
+  1.5× memory.
+- Opt-outs live with the workload, as pod-template annotations:
+  `k8s-rightsizer-report/exclude` for the whole thing, or
+  `exclude-containers` for sidecars and agents you do not control.
+- Shows `(unset)` workloads as `new`, so the ones with no requests at all are
+  not silently skipped.
+- `--diff` writes the patch, `--json` feeds dashboards.
+
+## Model
+
 A resource KRR deliberately leaves unset (it recommends no CPU limit) stays
 unset — the patch proposes what KRR proposed, and nothing else.
 
