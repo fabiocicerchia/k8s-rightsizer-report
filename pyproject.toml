@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "k8s-rightsizer-report"
 version = "0.3.1"
-description = "metrics-server/VPA data to PR-ready requests/limits diffs"
+description = "KRR recommendations, filtered for stability, as reviewable requests/limits changes"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Fabio Cicerchia" }]
@@ -66,6 +66,7 @@ mypy-init-return = true
   "S101",     # `assert` is what a test is
   "PLR2004",  # an expected value is the literal it compares against
   "ANN001",   # a fixture or a fake's argument, named by the test that builds it
+  "PLR0913",  # a fixture builder is a pile of named defaults; that is the point
 ]
 
 [tool.basedpyright]

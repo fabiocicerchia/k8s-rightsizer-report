@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>k8s-rightsizer-report — Turns metrics-server usage into PR-ready requests/limits changes.</title>
-<meta name="description" content="A human-readable rightsizing report, or patch YAML you can commit — closes the loop that VPA recommendations leave open, getting the numbers into the repo.">
+<title>k8s-rightsizer-report — KRR is the engine; this adds stability and the pull request.</title>
+<meta name="description" content="Records every KRR run in a committed history directory, proposes only the recommendations that have stopped moving, and opens the pull request.">
 <!-- The palette lives in the docs theme, so the splash and /docs/ cannot drift
      apart. The path is relative to the *deployed* layout: splash at /, rendered
      docs at /docs/. -->
@@ -44,10 +44,11 @@ footer{margin-top:2.2rem;color:#5c6684;font-size:.82rem}
 <body>
 <div class="card">
   <h1>📐 k8s-rightsizer-report</h1>
-  <p class="tagline">Turns metrics-server usage into PR-ready requests/limits changes.</p>
+  <p class="tagline">KRR is the engine. This adds stability and the pull request.</p>
   <p class="desc">
-    A human-readable rightsizing report, or patch YAML you can commit — closes the loop that VPA recommendations leave
-    open, getting the numbers into the repo.
+    KRR reads Prometheus history and does the sizing maths. This records every run in a directory you commit, proposes
+    only the recommendations that have stopped moving, and turns those into Kustomize patches, a Helm values diff, or a
+    pull request.
   </p>
   <div class="install-label">Install</div>
   <pre><code>pipx install git+https://github.com/fabiocicerchia/k8s-rightsizer-report</code></pre>

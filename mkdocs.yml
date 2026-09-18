@@ -3,7 +3,7 @@
 # while staying on the portfolio's standard tooling. See docs/stylesheets/extra.css
 # for the look; the accent palette lives there and is the only thing you swap.
 site_name: k8s-rightsizer-report
-site_description: metrics-server usage into PR-ready requests/limits changes for Kubernetes.
+site_description: KRR recommendations, filtered for stability, as reviewable Kubernetes changes.
 site_url: https://fabiocicerchia.github.io/k8s-rightsizer-report/docs/
 repo_url: https://github.com/fabiocicerchia/k8s-rightsizer-report
 repo_name: fabiocicerchia/k8s-rightsizer-report
