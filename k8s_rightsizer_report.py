@@ -30,6 +30,8 @@ MEMORY_STEP_MIB = 32
 # workload is the name minus this many trailing dash-separated parts.
 POD_SUFFIX_PARTS = 2
 
+# Bump on any change a consumer of --json would notice; cloudledger refuses versions it does not know.
+JSON_VERSION = 1
 DEFAULT_LOOKBACK_DAYS = 7  # --prometheus lookback; the flag default and this must agree
 
 # kubectl resource name -> (apiVersion, kind) — every workload kind this tool sizes
@@ -364,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = build_report(workloads, peaks)
 
     if args.json:
-        json.dump(rows, sys.stdout, indent=2)
+        json.dump({"version": JSON_VERSION, "rows": rows}, sys.stdout, indent=2)
     elif args.diff:
         print(render_diff(rows))  # noqa: T201 — the tool's output
     else:

@@ -20,7 +20,11 @@ Namespace to analyse.
 Emit patch YAML instead of a report.
 .TP
 .B \-\-json
-Machine-readable output.
+Machine-readable output: an object with
+.B version
+(currently 1) and a
+.B rows
+list.
 .TP
 .BI \-\-prometheus " URL"
 Use a PromQL p95-over-time instead of a point-in-time

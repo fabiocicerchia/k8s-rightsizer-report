@@ -31,6 +31,9 @@ k8s-rightsizer-report -n production --diff > rightsizing-patch.yaml
 k8s-rightsizer-report -n production --json
 ```
 
+`--json` prints `{"version": 1, "rows": [...]}`, one row per workload
+container; `version` changes whenever that shape does.
+
 The report shows current requests, peak observed usage, and recommended
 requests/limits per workload container, together with the percentage delta.
 Commit the patch YAML to your repository and open a PR to apply the changes.
