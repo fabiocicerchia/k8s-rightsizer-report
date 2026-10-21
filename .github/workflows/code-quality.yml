@@ -1,8 +1,8 @@
 name: code-quality
 
 on:
-  push:
-    branches: [main]
+  # No push trigger: the pull request already ran this on the identical
+  # tree. What a merge cannot tell you, the schedule below can.
   pull_request:
 
 permissions:
@@ -41,7 +41,7 @@ jobs:
 
       # Catch common typos in code and docs.
       - name: typos
-        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b  # master
+        uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b  # master
 
       # pre-commit runs the language-specific hooks defined in
       # .pre-commit-config.yaml. It no-ops gracefully if none apply.

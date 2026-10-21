@@ -22,8 +22,11 @@ concurrency:
 
 jobs:
   review:
+    # An LLM review of a version bump reads a diff with no code in it.
+    if: github.actor != 'dependabot[bot]'
     # read the code, post the review, and upload code-scanning results.
     permissions:
+      actions: read # private repo: upload-sarif reads this run's metadata
       contents: read
       packages: read # pull the ghcr scanner image
       pull-requests: write
@@ -35,7 +38,7 @@ jobs:
         with:
           fetch-depth: 0 # need base + head + their merge-base for the PR diff
 
-      - uses: fabiocicerchia/gandalf@08ab6976c4159bd56adcb7714f273d25c0e20c08  # v0.12.1
+      - uses: fabiocicerchia/gandalf@393b3111f238187ee22351ab0ed73303b6404c25  # v0.14.1
         with:
           # Code scanning needs GitHub Advanced Security on a private repo.
           # Without it the ingest fails and takes the whole review down with
