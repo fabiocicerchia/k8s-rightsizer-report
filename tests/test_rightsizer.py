@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 import k8s_rightsizer_report as m
@@ -46,6 +48,25 @@ def test_report_flags_unset_requests() -> None:
     rows = build_report(deployments, peaks)
     assert rows[0]["current_requests"] is None
     assert "(unset)" in render_report(rows, "app")
+
+
+def test_json_output_is_versioned(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    # cloudledger ingests this shape and refuses an unknown version: bump it on any change.
+    deployment = {"metadata": {"name": "api"}, "spec": {"template": {"spec": {"containers": [{"name": "app"}]}}}}
+
+    def workloads(namespace: str) -> list[tuple[str, str, m.Manifest]]:
+        return [("apps/v1", "Deployment", deployment)]
+
+    def usage(namespace: str) -> m.Usage:
+        return {"api-6d4cf56db6-x7k2p": {"app": {"cpu": 0.2, "memory": 128 * 2**20}}}
+
+    monkeypatch.setattr(m, "fetch_workloads", workloads)
+    monkeypatch.setattr(m, "top_pods", usage)
+    assert m.main(["-n", "default", "--json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert list(doc) == ["version", "rows"]
+    assert doc["version"] == 1
+    assert doc["rows"][0]["workload"] == "api"
 
 
 def test_top_pods_prometheus_parses_p95_vectors() -> None:

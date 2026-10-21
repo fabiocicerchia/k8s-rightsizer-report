@@ -18,7 +18,7 @@ k8s-rightsizer-report -n default
 k8s-rightsizer-report -n default --diff > rightsizing-patch.yaml
 
 # JSON output (pipe to jq or feed a dashboard):
-k8s-rightsizer-report -n default --json | jq .
+k8s-rightsizer-report -n default --json | jq .rows
 ```
 
 ## Expected output
