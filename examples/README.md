@@ -2,5 +2,6 @@
 
 Runnable, self-contained examples. Each subfolder shows one clear use case.
 
-- `basic/` — generate a rightsizing report from a live namespace using metrics-server.
-- `github-action/` — weekly workflow that opens a PR with the patch YAML.
+- `basic/` — turn a KRR scan into stability-filtered proposals for a namespace.
+- `github-action/` — weekly workflow that records a run and opens a PR with
+  whatever has settled.
