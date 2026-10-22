@@ -38,6 +38,12 @@ k8s-rightsizer-report -n production --krr-arg=-p --krr-arg=http://prometheus:909
 k8s-rightsizer-report -n production --json
 ```
 
+`--json` prints `{"version": 2, "rows": [...], "held": [...], ...}`: `rows` are
+the recommendations that cleared the stability rule, `held` the ones that did
+not, and beside them the rule, the history file, the projected saving and the
+change. `version` changes whenever that shape does; version 1 was the
+metrics-server row (`current_requests`, `peak`, `recommended`, `cpu_change_pct`).
+
 The first run proposes nothing, and says so: there is no history to be stable
 against yet. That is the point — run it on a schedule (weekly is a sensible
 cadence for a KRR window of a week or two) and commit the history directory. By

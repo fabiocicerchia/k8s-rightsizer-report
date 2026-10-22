@@ -46,6 +46,10 @@ HISTORY_SCHEMA = 1
 # illegal in a Windows filename, and this directory is meant to be committed.
 RUN_FILENAME_FORMAT = "%Y-%m-%dT%H-%M-%SZ"
 
+# Bump on any change a consumer of --json would notice; cloudledger refuses versions it does not know.
+# 2: rows are KRR recommendations that cleared the stability rule; held, rule and the rest sit beside them.
+JSON_VERSION = 2
+
 # A KRR document, a Kubernetes manifest, a Helm values tree: someone else's
 # deep, variable JSON, not worth modelling past the fields read here.
 Manifest = dict[str, Any]
@@ -1028,10 +1032,11 @@ def _json_payload(
     proposed: Sequence[Recommendation], held: Sequence[Recommendation], rule: Rule, run_path: Path | None
 ) -> Manifest:
     return {
+        "version": JSON_VERSION,
+        "rows": list(proposed),
         "engine": "krr",
         "rule": {"tolerance_pct": rule.tolerance_pct, "runs": rule.runs, "description": rule.describe()},
         "history_file": str(run_path) if run_path else None,
-        "proposed": list(proposed),
         "held": list(held),
         "projected_monthly_saving": monthly_saving(proposed),
     }

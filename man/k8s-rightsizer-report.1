@@ -103,7 +103,14 @@ Branch name for
 .BR rightsizer/<timestamp> ).
 .TP
 .B \-\-json
-Machine\-readable output.
+Machine\-readable output: an object with
+.B version
+(currently 2), a
+.B rows
+list of the recommendations that cleared the stability rule, a
+.B held
+list of those that did not, and the rule, history file, projected saving and
+change beside them. Version 1 rows were metrics\-server sizings and are gone.
 .SH EXIT STATUS
 .TP
 .B 0

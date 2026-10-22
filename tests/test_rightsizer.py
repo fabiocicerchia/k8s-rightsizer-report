@@ -543,7 +543,10 @@ def test_no_record_leaves_the_history_alone_but_still_classifies(
     payload = m.json.loads(capsys.readouterr().out)
     assert len(list(history.glob("*.json"))) == 2
     assert payload["history_file"] is None
-    assert [r["key"] for r in payload["proposed"]] == ["prod/Deployment/api/app"]
+    # cloudledger ingests this shape and refuses an unknown version: bump it on any change.
+    assert list(payload)[:2] == ["version", "rows"]
+    assert payload["version"] == 2
+    assert [r["key"] for r in payload["rows"]] == ["prod/Deployment/api/app"]
     assert payload["rule"] == {
         "tolerance_pct": 15.0,
         "runs": 3,

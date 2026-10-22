@@ -20,7 +20,7 @@ krr simple --formatter json -n default > krr.json
 k8s-rightsizer-report --krr-json krr.json
 
 # JSON output (pipe to jq or feed a dashboard):
-k8s-rightsizer-report -n default --json | jq '.proposed[].key'
+k8s-rightsizer-report -n default --json | jq '.rows[].key'
 ```
 
 ## Expected output
