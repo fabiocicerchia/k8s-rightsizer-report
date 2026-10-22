@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "k8s-rightsizer-report"
-version = "0.3.2"
+version = "1.0.0"
 description = "KRR recommendations, filtered for stability, as reviewable requests/limits changes"
 readme = "README.md"
 license = { text = "Apache-2.0" }
