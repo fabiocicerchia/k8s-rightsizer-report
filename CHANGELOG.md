@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v1.0.0...v1.0.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* Upgrade gitpython 3.1.62 → 3.2.1 ([#133](https://github.com/fabiocicerchia/k8s-rightsizer-report/issues/133)) ([c8afc04](https://github.com/fabiocicerchia/k8s-rightsizer-report/commit/c8afc04074c47a0eaa1fdf91b0fc1791dd651666))
+
 ## [1.0.0](https://github.com/fabiocicerchia/k8s-rightsizer-report/compare/v0.3.2...v1.0.0) (2026-10-22)
 
 
