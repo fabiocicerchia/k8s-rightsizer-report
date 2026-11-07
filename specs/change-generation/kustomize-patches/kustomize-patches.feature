@@ -3,7 +3,7 @@ Feature: Generating Kustomize patches
   Turns the proposed recommendations into strategic-merge patches a GitOps repository can merge as-is.
 
   Background:
-    Given Given every recommendation below has held steady for 3 runs
+    Given every recommendation below has held steady for 3 runs unless a scenario says otherwise
 
   @id:change-generation.kustomize-patches.001 @rule:change-generation.kustomize-patches.one-patch-per-workload @verified @source:k8s_rightsizer_report.py#kustomize_patches @test:tests/test_rightsizer.py#test_one_patch_per_workload_with_every_stable_container
   Scenario: Each workload gets one patch covering all its proposed containers

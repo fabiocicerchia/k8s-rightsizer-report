@@ -4,9 +4,9 @@ Feature: Reading the run history
 
   @id:run-history.reading-history.001 @rule:run-history.reading-history.unreadable-run-refused @verified @source:k8s_rightsizer_report.py#load_history @test:tests/test_rightsizer.py#test_load_history_refuses_a_corrupt_run
   Scenario Outline: A damaged history file stops the run instead of being skipped
-    Given the history directory contains `2026-09-02T06-00-00Z.json` holding <content>
+    Given the history directory .rightsizer/history contains `2026-09-02T06-00-00Z.json` holding <content>
     When the operator runs the rightsizer
-    Then stderr shows `error: <path> <message>`
+    Then stderr shows `error: .rightsizer/history/2026-09-02T06-00-00Z.json <message>`
     And the command exits with status 1
     And no new run is recorded
 

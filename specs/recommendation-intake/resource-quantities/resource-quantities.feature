@@ -18,7 +18,7 @@ Feature: Reading and writing CPU and memory quantities
   @id:recommendation-intake.resource-quantities.002 @rule:recommendation-intake.resource-quantities.quantity-strings-and-unknowns @verified @source:k8s_rightsizer_report.py#quantity @test:tests/test_rightsizer.py#test_normalise_tolerates_quantity_strings_and_unknowns
   Scenario Outline: Kubernetes quantity strings are understood and KRR's unknown is shown as unset
     Given KRR reports the current <field> as `<krr value>`
-    When the operator runs the rightsizer
+    When the operator runs the rightsizer and the recommendation is proposed
     Then the report shows that value as `<shown>`
 
     Examples:

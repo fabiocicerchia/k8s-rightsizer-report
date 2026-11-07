@@ -28,6 +28,7 @@ Feature: Recording every run as evidence
   @id:run-history.recording-runs.004 @rule:run-history.recording-runs.recorded-before-output @inferred @source:k8s_rightsizer_report.py#run_once @questionable
   Scenario: A run is recorded even when generating the change then fails
     Given the history holds two runs
+    And values.yaml exists
     When the operator runs the rightsizer with `--helm-values values.yaml --helm-key api.resources`
     Then stderr shows `error: --helm-key wants WORKLOAD[/CONTAINER]=DOTTED.PATH, got 'api.resources'`
     And the command exits with status 1

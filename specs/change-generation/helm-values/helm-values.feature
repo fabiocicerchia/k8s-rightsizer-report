@@ -3,7 +3,7 @@ Feature: Updating a Helm chart's values
   Lets teams that deploy with Helm receive the proposals as a values-file diff instead of Kustomize patches.
 
   Background:
-    Given Given prod/Deployment/api/app is proposed at 100m CPU and 100Mi memory
+    Given prod/Deployment/api/app is proposed at 100m CPU and 100Mi memory
 
   @id:change-generation.helm-values.001 @rule:change-generation.helm-values.located-by-name @verified @source:k8s_rightsizer_report.py#values_path @test:tests/test_rightsizer.py#test_helm_values_diff_sets_resources_under_the_workload_key
   Scenario Outline: Resources are placed under the container's or workload's block in the values file
