@@ -1,0 +1,266 @@
+{
+ "excluded": {
+  "stylesheets/extra": [
+   {
+    "candidate": "Header translucency, blur and hairline divider; tab link opacity",
+    "covered_by": "",
+    "reason": "INTERNAL_MECHANISM",
+    "source": "docs/stylesheets/extra.css#.md-header"
+   },
+   {
+    "candidate": "Heading weights, letter-spacing and kerning",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#.md-typeset h1"
+   },
+   {
+    "candidate": "Rounded, bordered code blocks",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#.md-typeset .highlight"
+   },
+   {
+    "candidate": "Tables styled as cards with uppercase headers",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#.md-typeset table:not([class])"
+   },
+   {
+    "candidate": "Pill buttons with hover lift animation",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#.md-typeset .md-button"
+   },
+   {
+    "candidate": "Hero layout sizes and tagline styling",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#.md-typeset .hero"
+   },
+   {
+    "candidate": "Feature cards with depth, hover lift and accent-coloured icons",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#.md-typeset .grid.cards > ul > li"
+   },
+   {
+    "candidate": "Dark-scheme background colours for page, header and tabs",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#[data-md-color-scheme=\"slate\"]"
+   },
+   {
+    "candidate": "Sidebar and footer font weights and borders; smooth scrolling",
+    "covered_by": "",
+    "reason": "TRIVIAL",
+    "source": "docs/stylesheets/extra.css#.md-footer-meta"
+   }
+  ]
+ },
+ "lifted": {
+  "stylesheets/extra": []
+ },
+ "retired": [],
+ "scenarios": {
+  "docs.documentation.site-theme.001": {
+   "file": "docs/specs/documentation/site-theme/docs-site-theme.feature",
+   "fingerprint": "564588beee72",
+   "human": false,
+   "rule": "documentation.site-theme.no-external-font-requests",
+   "source": "docs/stylesheets/extra.css#:root",
+   "status": "inferred",
+   "test": "",
+   "tests": []
+  },
+  "docs.documentation.site-theme.002": {
+   "file": "docs/specs/documentation/site-theme/docs-site-theme.feature",
+   "fingerprint": "564588beee72",
+   "human": false,
+   "rule": "documentation.site-theme.shared-accent-palette",
+   "source": "docs/stylesheets/extra.css#:root",
+   "status": "inferred",
+   "test": "",
+   "tests": []
+  },
+  "docs.documentation.site-theme.003": {
+   "file": "docs/specs/documentation/site-theme/docs-site-theme.feature",
+   "fingerprint": "c702704e5aae",
+   "human": false,
+   "rule": "documentation.site-theme.no-placeholder-logo",
+   "source": "docs/stylesheets/extra.css#.md-header__button.md-logo",
+   "status": "inferred",
+   "test": "",
+   "tests": []
+  }
+ },
+ "taxonomy": {
+  "domains": [
+   {
+    "areas": [
+     {
+      "description": "Runs krr when it is on PATH and passes krr's own flags through.",
+      "slug": "krr-invocation",
+      "title": "Running KRR"
+     },
+     {
+      "description": "Reads a KRR JSON document you already have, from a file or from stdin.",
+      "slug": "document-input",
+      "title": "Reading existing runs"
+     },
+     {
+      "description": "Turns KRR scans into one recommendation per workload container, with a stable key across runs.",
+      "slug": "normalisation",
+      "title": "Normalisation"
+     },
+     {
+      "description": "Refuses empty or invalid scans so they are never recorded as observations.",
+      "slug": "run-validation",
+      "title": "Refused runs"
+     }
+    ],
+    "description": "Getting KRR's recommendations into the tool and normalising them.",
+    "slug": "ingestion",
+    "title": "Recommendation ingestion"
+   },
+   {
+    "areas": [
+     {
+      "description": "Writes each run to a timestamped JSON file, unless recording is turned off.",
+      "slug": "run-recording",
+      "title": "Recording runs"
+     },
+     {
+      "description": "Loads and orders earlier runs so the newest can be compared with them.",
+      "slug": "history-loading",
+      "title": "Reading history"
+     }
+    ],
+    "description": "The committed directory of past runs, which is the tool's entire state.",
+    "slug": "history",
+    "title": "Run history"
+   },
+   {
+    "areas": [
+     {
+      "description": "Finds, for each resource dimension, the longest recent run of consecutive values that stay within tolerance.",
+      "slug": "streak-evaluation",
+      "title": "Streak evaluation"
+     },
+     {
+      "description": "Splits recommendations into proposed ones and flapping ones, the latter with the range they move over.",
+      "slug": "proposal-classification",
+      "title": "Proposed vs not yet"
+     },
+     {
+      "description": "Lets the user set the tolerance and the number of consecutive runs the rule needs.",
+      "slug": "rule-tuning",
+      "title": "Tolerance and run count"
+     }
+    ],
+    "description": "Decides which recommendations have settled enough to propose.",
+    "slug": "stability",
+    "title": "Stability rule"
+   },
+   {
+    "areas": [
+     {
+      "description": "Emits one strategic-merge patch per workload.",
+      "slug": "kustomize-patches",
+      "title": "Kustomize patches"
+     },
+     {
+      "description": "Rewrites a Helm values file and shows the change as a unified diff.",
+      "slug": "helm-values",
+      "title": "Helm values diff"
+     },
+     {
+      "description": "Holds back, by name, any change that would put a request above a limit it does not touch.",
+      "slug": "limit-safety",
+      "title": "Request/limit safety"
+     }
+    ],
+    "description": "Turns stable recommendations into a change someone can review.",
+    "slug": "change-output",
+    "title": "Change output"
+   },
+   {
+    "areas": [
+     {
+      "description": "Prints proposed and not-yet recommendations in human-readable form, with the rule shown.",
+      "slug": "text-report",
+      "title": "Terminal report"
+     },
+     {
+      "description": "Machine-readable results for dashboards and pipeline steps.",
+      "slug": "json-output",
+      "title": "JSON output"
+     },
+     {
+      "description": "States the stability rule in every output, so no hold-back is left unexplained.",
+      "slug": "rule-transparency",
+      "title": "Rule transparency"
+     }
+    ],
+    "description": "How results and the reasons behind them are shown to people and pipelines.",
+    "slug": "reporting",
+    "title": "Reporting"
+   },
+   {
+    "areas": [
+     {
+      "description": "Commits the change and the run file on a branch and opens a PR with gh; opens nothing when there is nothing to commit.",
+      "slug": "pull-requests",
+      "title": "Opening pull requests"
+     },
+     {
+      "description": "Refuses an apply flag by name, so all rollout goes through review and merge.",
+      "slug": "no-apply",
+      "title": "No direct apply"
+     }
+    ],
+    "description": "Delivers the proposal as a GitOps change instead of applying it.",
+    "slug": "gitops",
+    "title": "Pull request workflow"
+   },
+   {
+    "areas": [
+     {
+      "description": "Getting-started, architecture and reference pages for users.",
+      "slug": "guides",
+      "title": "Guides"
+     },
+     {
+      "description": "Offline MkDocs Material styling and the accent palette shared by the docs and the splash page.",
+      "slug": "site-theme",
+      "title": "Site theme and branding"
+     }
+    ],
+    "description": "The published guides and how they look.",
+    "slug": "documentation",
+    "title": "Documentation site"
+   },
+   {
+    "areas": [
+     {
+      "description": "Make targets, installation and building the package.",
+      "slug": "build-packaging",
+      "title": "Build and packaging"
+     },
+     {
+      "description": "Linting, tests, pre-commit hooks and the security scans run in CI.",
+      "slug": "quality-gates",
+      "title": "Quality gates"
+     },
+     {
+      "description": "Automated versioning and changelog, and dependency update bumps.",
+      "slug": "releases",
+      "title": "Releases and dependencies"
+     }
+    ],
+    "description": "Building, testing, packaging and releasing the project.",
+    "slug": "developer-tooling",
+    "title": "Developer tooling"
+   }
+  ]
+ }
+}
