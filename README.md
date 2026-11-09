@@ -1,5 +1,11 @@
 # k8s-rightsizer-report
 
+> [!WARNING]
+> **This project is retired** and no longer maintained. If you need something
+> for this, [KRR](https://github.com/robusta-dev/krr) is the engine this tool
+> wrapped; use it directly for Prometheus-based resource recommendations. It is
+> a separate project, actively developed, and worth a look.
+
 [![CI](https://github.com/fabiocicerchia/k8s-rightsizer-report/actions/workflows/ci.yml/badge.svg)](https://github.com/fabiocicerchia/k8s-rightsizer-report/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Security](https://github.com/fabiocicerchia/k8s-rightsizer-report/actions/workflows/security.yml/badge.svg)](https://github.com/fabiocicerchia/k8s-rightsizer-report/actions/workflows/security.yml)
